@@ -14,30 +14,21 @@
     "ci": "npm run lint && npm run test"
   },
   "dependencies": {
-    "@listam/backend": "file:../listam-mobile/packages/backend",
-    "@listam/client": "file:../listam-mobile/packages/client",
-    "@listam/domain": "file:../listam-mobile/packages/domain",
-    "@listam/logging": "file:../listam-mobile/packages/logging",
-    "@listam/protocol": "file:../listam-mobile/packages/protocol",
-    "@listam/secrets": "file:../listam-mobile/packages/secrets",
+    "@listam/backend": "^0.8.0",
+    "@listam/client": "^0.8.0",
+    "@listam/domain": "^0.7.0",
+    "@listam/logging": "^0.7.0",
+    "@listam/protocol": "^0.7.0",
+    "@listam/secrets": "^0.7.0",
     "b4a": "^1.7.1",
     "corestore": "^7.5.0",
     "hypercore-crypto": "^3.6.1",
     "hyperswarm": "^4.12.1",
     "hyperdht": "^6.27.0",
-    "@listam/owner-control": "file:../listam-mobile/packages/owner-control"
+    "@listam/owner-control": "^0.14.0"
   },
   "devDependencies": {
     "eslint": "^9.39.1",
     "typescript-eslint": "^8.46.4"
-  },
-  "overrides": {
-    "@listam/backend": "file:../listam-mobile/packages/backend",
-    "@listam/client": "file:../listam-mobile/packages/client",
-    "@listam/domain": "file:../listam-mobile/packages/domain",
-    "@listam/logging": "file:../listam-mobile/packages/logging",
-    "@listam/protocol": "file:../listam-mobile/packages/protocol",
-    "@listam/secrets": "file:../listam-mobile/packages/secrets",
-    "@listam/owner-control": "file:../listam-mobile/packages/owner-control"
   }
 }
