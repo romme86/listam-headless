@@ -22,6 +22,7 @@ import { buildConfig, loadConfig, saveConfig, parseBootstrap, configPath } from 
 import { readStatus } from './src/status.mjs'
 import { startHeadlessService } from './src/service.mjs'
 import { startBlindHelper } from './src/blind.mjs'
+import { startOwnerControl } from './src/control.mjs'
 
 const logger = createLogger({ app: 'headless', write: (line) => process.stderr.write(line + '\n') })
 
@@ -96,12 +97,54 @@ async function main() {
         ? await startBlindHelper({ fs, storageDir, config, logger })
         : await startHeadlessService({ fs, storageDir, config, logger })
 
-    out({ event: 'ready', role: config.role })
+    // The H1 owner-control channel: remote commands run through the same op
+    // surface, but only after the signed-envelope/capability authorization in
+    // src/control.mjs. The executor narrows what each role offers remotely.
+    let control = null
+    const executor = async (command, payload) => {
+        switch (command) {
+            case 'status':
+                return { status: instance.snapshot() }
+            case 'diagnostics':
+                return { status: instance.snapshot(), audit: control?.recentAudit() ?? [] }
+            case 'invite':
+                if (config.role === 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                return instance.handleOp({ op: 'invite' })
+            case 'export':
+                if (config.role === 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                // Remote exports return data only; nothing is written server-side.
+                return instance.handleOp({ op: 'export' })
+            case 'import':
+                if (config.role === 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                return instance.handleOp({ op: 'import', data: payload?.data })
+            case 'topics':
+                if (config.role !== 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                if (payload?.action !== 'pin') return { ok: false, reason: 'unknown-topics-action' }
+                return instance.handleOp({ op: 'pin', key: payload.key })
+            case 'shutdown':
+                return { willShutdown: true }
+            default:
+                return { ok: false, reason: 'unknown-command' }
+        }
+    }
+    control = await startOwnerControl({
+        fs,
+        storageDir,
+        config,
+        executor,
+        onShutdownRequested: () => void shutdown(0),
+        logger,
+    })
+
+    out({ event: 'ready', role: config.role, controlPublicKey: control.publicKeyHex })
 
     let shuttingDown = false
     async function shutdown(code = 0) {
         if (shuttingDown) return
         shuttingDown = true
+        try {
+            await control?.close()
+        } catch {}
         try {
             await instance.shutdown()
         } catch (error) {
@@ -128,13 +171,33 @@ async function main() {
             return
         }
         try {
-            const result = await instance.handleOp(request)
+            const result = await handleOperatorOp(request)
             out({ id: request.id, ok: result?.ok !== false, ...result })
             if (result?.shutdown) await shutdown(0)
         } catch (error) {
             out({ id: request.id, ok: false, message: error?.message ?? String(error) })
         }
     })
+
+    // Owner-control management stays on the operator surface (local shell /
+    // SSH): minting pairing codes, listing devices, and revoking them are not
+    // remote capabilities.
+    async function handleOperatorOp(request) {
+        switch (request.op) {
+            case 'control-info':
+                return { controlPublicKey: control.publicKeyHex, devices: control.listDevices() }
+            case 'control-pair':
+                return control.createPairingCode(request.capabilities ?? [])
+            case 'control-devices':
+                return { devices: control.listDevices() }
+            case 'control-revoke':
+                return control.revokeDevice(request.deviceId)
+            case 'control-audit':
+                return { audit: control.recentAudit() }
+            default:
+                return instance.handleOp(request)
+        }
+    }
 }
 
 main().catch((error) => {

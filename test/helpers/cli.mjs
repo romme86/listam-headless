@@ -57,12 +57,13 @@ export function runHeadless(args) {
             const id = ++nextId
             const response = new Promise((resolve) => pending.set(id, resolve))
             proc.stdin.write(JSON.stringify({ ...fields, id, op }) + '\n')
-            return Promise.race([
-                response,
-                once(proc, 'exit').then(() => {
-                    throw new Error(`headless exited mid-request '${op}' (code ${exitCode})\nstderr tail: ${stderr.slice(-2000)}`)
-                }),
-            ])
+            const exitRejection = once(proc, 'exit').then(() => {
+                throw new Error(`headless exited mid-request '${op}' (code ${exitCode})\nstderr tail: ${stderr.slice(-2000)}`)
+            })
+            // The exit branch fires eventually even when the response won the
+            // race; keep its rejection handled so teardown never reports it.
+            exitRejection.catch(() => {})
+            return Promise.race([response, exitRejection])
         },
         async waitFor(predicate, { op = 'status', timeoutMs = 120_000, intervalMs = 1000 } = {}) {
             const deadline = Date.now() + timeoutMs
