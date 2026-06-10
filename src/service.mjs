@@ -25,6 +25,7 @@ import {
     RPC_CREATE_INVITE,
     RPC_REQUEST_SYNC,
     RPC_GET_MEMBERS,
+    RPC_REMOVE_MEMBER,
 } from '@listam/protocol'
 import { writeStatus } from './status.mjs'
 import { createQuotaMonitor } from './quota.mjs'
@@ -162,6 +163,12 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             case 'members':
                 await channel.client.send(RPC_GET_MEMBERS)
                 return { roster: state.roster }
+            case 'remove-member':
+                // Owner-only at the backend layer: triggers the C1 re-key flow
+                // (epoch rotation), so the removed device cannot follow new
+                // content even if consensus-layer removal lags.
+                await channel.client.send(RPC_REMOVE_MEMBER, { writerKey: request.writerKey })
+                return {}
             case 'dump':
                 return { items: state.items, peerCount: state.peerCount, joined: state.joined, inviteKey: state.inviteKey, roster: state.roster }
             case 'export': {
