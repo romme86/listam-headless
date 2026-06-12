@@ -195,6 +195,10 @@ await beta.service.request('delete', { itemId: betaDeleteTarget.id })
 await alpha.service.waitFor((reply) => !reply.items?.some((item) => item.id === betaDeleteTarget.id), { op: 'dump', timeoutMs: 180_000 })
 mark('survivors-continue')
 
+// A SIGKILLed instance leaves its storage lease behind; on a fast local
+// testnet this row reaches the restart well inside the 30s lease TTL, so
+// wait it out the way a real crash recovery would.
+await sleep(31_000)
 const gammaRestarted = runHeadless(['run', '--storage', gamma.dir, '--bootstrap', bootstrap])
 await gammaRestarted.ready()
 const gammaFinal = await gammaRestarted.waitFor(

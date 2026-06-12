@@ -36,7 +36,7 @@ export function normalizeBaseKeyHex(value) {
     return HEX_32.test(text) ? text : null
 }
 
-export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes }) {
+export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leafBridgePort }) {
     const normalizedRole = normalizeRole(role)
     if (!normalizedRole) {
         return { ok: false, reason: `role must be one of: ${ROLES.join(', ')}` }
@@ -52,6 +52,11 @@ export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes }) {
 
     const parsedBootstrap = parseBootstrap(bootstrap)
     if (parsedBootstrap) config.bootstrap = parsedBootstrap
+
+    const parsedLeafPort = Number(leafBridgePort)
+    if (Number.isInteger(parsedLeafPort) && parsedLeafPort > 0 && parsedLeafPort < 65536) {
+        config.leafBridgePort = parsedLeafPort
+    }
 
     if (normalizedRole === 'blind-storage') {
         // A blind helper pins ciphertext cores by public key. It must never be

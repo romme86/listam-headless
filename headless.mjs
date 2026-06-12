@@ -6,6 +6,9 @@
 //                            [--max-storage-bytes <n>] [--force]
 //   node headless.mjs run    --storage <dir> [--bootstrap host:port,...]
 //   node headless.mjs status --storage <dir>
+//   node headless.mjs install   --storage <dir> [--role ...] [--base-key <hex>]
+//                               [--invite <key>]   (Linux: systemd user unit)
+//   node headless.mjs uninstall --storage <dir>
 //
 // `run` is the long-lived owned peer. It accepts the scriptable harness
 // primitives as JSON lines on stdin (status, invite/print-invite, join,
@@ -84,7 +87,29 @@ async function main() {
         process.exit(snapshot.stale ? 1 : 0)
     }
 
-    if (command !== 'run') fail(`unknown command ${command} (expected setup, run, or status)`)
+    // The installer pulls in child_process/systemd plumbing the long-lived
+    // service never needs; load it only for these commands.
+    if (command === 'install') {
+        const { installService } = await import('./src/install.mjs')
+        const result = await installService({
+            fs,
+            storageDir,
+            role: args.role ?? 'participant',
+            baseKeyHex: typeof args['base-key'] === 'string' ? args['base-key'] : null,
+            inviteKey: typeof args.invite === 'string' ? args.invite : null,
+        })
+        out(result)
+        process.exit(result.ok ? 0 : 1)
+    }
+
+    if (command === 'uninstall') {
+        const { uninstallService } = await import('./src/install.mjs')
+        const result = uninstallService({ fs, storageDir })
+        out(result)
+        process.exit(result.ok ? 0 : 1)
+    }
+
+    if (command !== 'run') fail(`unknown command ${command} (expected setup, run, status, install, or uninstall)`)
 
     const config = loadConfig(fs, storageDir)
     if (!config) fail(`no valid config at ${configPath(storageDir)}; run setup first`)
@@ -142,6 +167,16 @@ async function main() {
     async function shutdown(code = 0) {
         if (shuttingDown) return
         shuttingDown = true
+        // A wedged teardown (e.g. the P2P stack blocked against an unreachable
+        // DHT, or an autobase append that cannot complete) must not keep the
+        // process alive after the operator asked it to stop. Corestore writes
+        // are crash-safe, so forcing the exit loses nothing a SIGKILL would
+        // have preserved.
+        const watchdog = setTimeout(() => {
+            logger.log('[ERROR] Shutdown did not complete within 5s; forcing exit')
+            process.exit(code)
+        }, 5_000)
+        watchdog.unref?.()
         try {
             await control?.close()
         } catch {}
