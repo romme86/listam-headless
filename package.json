@@ -11,7 +11,8 @@
     "start": "node headless.mjs run",
     "test": "node --test --test-force-exit test/*.test.mjs",
     "lint": "eslint .",
-    "ci": "npm run lint && npm run test"
+    "ci": "npm run lint && npm run test",
+    "dist": "node scripts/build-dist.mjs"
   },
   "dependencies": {
     "@listam/backend": "file:../listam-packages/packages/backend",

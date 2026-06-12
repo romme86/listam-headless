@@ -16,6 +16,52 @@ Two roles, chosen at setup:
   serves encrypted blocks it cannot read. There is no "read-only" tier;
   that would require credentials the substrate does not have.
 
+## Install
+
+Requires Node.js 22 or newer. The always-on path targets Linux (Raspberry
+Pi OS, Debian, Ubuntu — systemd user unit with a cron fallback).
+
+**From npm (recommended for servers):**
+
+```sh
+npm install -g listam-headless
+listam-headless install --storage ~/listam-data --invite <code>
+```
+
+`install` runs setup, writes a systemd user unit (enabling linger so it
+survives reboots), starts the service, and — given `--invite` — joins your
+list before returning. The invite code comes from the share flow in the
+Listam mobile or desktop app. Afterwards:
+
+```sh
+listam-headless status --storage ~/listam-data   # live snapshot, exit 1 if stale
+journalctl --user -u listam-headless -n 20       # service log
+listam-headless uninstall --storage ~/listam-data
+```
+
+Use a global install (not `npx`) for `install`: the generated unit points
+at the package on disk, and the npx cache is not a stable home for it.
+
+**From the website tarball** ([listam.ch/downloads](https://listam.ch/downloads)):
+
+```sh
+tar xzf listam-headless-<version>.tgz && cd package
+npm install --omit=dev
+node headless.mjs install --storage ~/listam-data --invite <code>
+```
+
+**From source** (the checkout expects the shared packages next to it):
+
+```sh
+git clone https://github.com/romme86/listam-headless.git
+git clone https://github.com/romme86/listam-packages.git
+cd listam-headless && npm install
+```
+
+Maintainers: `npm run dist` builds `dist/listam-headless-<version>.tgz`
+with the `@listam/*` deps rewritten to registry ranges; `npm publish` runs
+from `dist/stage/`.
+
 ## Usage
 
 ```sh
