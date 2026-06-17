@@ -3,6 +3,25 @@
 // read by `run`/`status`. The fs module is injected for testability.
 export const ROLES = Object.freeze(['participant', 'blind-storage'])
 export const DEFAULT_MAX_STORAGE_BYTES = 1024 * 1024 * 1024 // 1 GiB
+export const DEFAULT_VOICE_PORT = 9994
+
+// Voice assistant config (off by default). Reads an optional `voice` block from
+// headless-config.json with env overrides, so a leaf can stream audio here for
+// transcription + command execution. modelPath must point at a whisper.cpp GGML
+// model for STT to be available.
+export function normalizeVoiceConfig(raw = {}, env = {}) {
+    const r = raw && typeof raw === 'object' ? raw : {}
+    const port = Number(env.LISTAM_VOICE_PORT ?? r.audioPort ?? DEFAULT_VOICE_PORT)
+    return {
+        enabled: env.LISTAM_VOICE_ENABLED === '1' || r.enabled === true,
+        engine: r.engine || 'whisper-cpp',
+        binPath: env.LISTAM_VOICE_BIN || r.binPath || 'whisper-cli',
+        modelPath: env.LISTAM_VOICE_MODEL || r.modelPath || null,
+        audioPort: Number.isInteger(port) && port > 0 && port < 65536 ? port : DEFAULT_VOICE_PORT,
+        locale: r.locale || 'auto',
+        notesListId: r.notesListId || 'voicenotes',
+    }
+}
 
 const HEX_32 = /^[0-9a-f]{64}$/i
 

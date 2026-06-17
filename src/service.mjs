@@ -29,6 +29,7 @@ import {
 } from '@listam/protocol'
 import { writeStatus } from './status.mjs'
 import { createQuotaMonitor } from './quota.mjs'
+import { normalizeVoiceConfig } from './config.mjs'
 
 export const EXPORT_VERSION = 1
 
@@ -104,6 +105,55 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             leafBridge = await startLeafBridge({ port: leafBridgePort, logger })
         } catch (err) {
             logger?.log?.('[ERROR] leaf-bridge failed to start:', err?.message ?? err)
+        }
+    }
+
+    // Optional voice assistant: a side-band TCP socket receives PCM audio from a
+    // leaf, whisper.cpp transcribes it, and the parsed command runs through the
+    // same backend RPCs the stdin ops use. Off unless config.voice.enabled (or
+    // LISTAM_VOICE_ENABLED=1) with a whisper model configured. NB: headless tracks
+    // one list, so named-list resolution / cross-list remove are limited to the
+    // tracked list; default-list add and the notes destination work fully.
+    let voiceBridge = null
+    const voiceCfg = normalizeVoiceConfig(config.voice, process.env)
+    if (voiceCfg.enabled) {
+        try {
+            const net = await import('node:net')
+            const { createStt } = await import('@listam/backend/lib/stt/index.mjs')
+            const { startAudioBridge } = await import('@listam/backend/lib/audio-bridge.mjs')
+            const { createVoiceController } = await import('@listam/backend/lib/voice-controller.mjs')
+            const { parseIntent } = await import('@listam/domain/voice-intent')
+            const { isRegistryItem } = await import('@listam/domain/list-registry')
+
+            const stt = createStt({ engine: voiceCfg.engine, config: voiceCfg, logger })
+            const controller = createVoiceController({
+                addItem: async (text, listId, listType) => parseMutationReply(await channel.client.send(RPC_ADD, { text, listId, listType })).ok,
+                deleteItem: async (item) => parseMutationReply(await channel.client.send(RPC_DELETE, { item })).ok,
+                getAllItems: async () => state.items,
+                getRegistryItems: async () => state.items.filter(isRegistryItem),
+                notesListId: voiceCfg.notesListId,
+                logger,
+            })
+
+            voiceBridge = await startAudioBridge({
+                tcp: net.default ?? net,
+                port: voiceCfg.audioPort,
+                onUtterance: async (utterance) => {
+                    try {
+                        if (!(await stt.available())) { logger?.log?.('[voice] STT unavailable — set config.voice.modelPath'); return }
+                        const { text, locale } = await stt.transcribe(utterance)
+                        const lang = locale && locale !== 'auto' ? locale : (voiceCfg.locale !== 'auto' ? voiceCfg.locale : 'en')
+                        const result = await controller.execute(parseIntent(text, lang))
+                        logger?.log?.(`[voice] "${text}" -> ${result.intent} (${result.code})`)
+                    } catch (err) {
+                        logger?.log?.('[ERROR] voice utterance failed:', err?.message ?? err)
+                    }
+                },
+                logger,
+            })
+            logger?.log?.(`[voice] audio bridge listening on :${voiceBridge.port}`)
+        } catch (err) {
+            logger?.log?.('[ERROR] voice bridge failed to start:', err?.message ?? err)
         }
     }
 
@@ -275,6 +325,7 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
     }
 
     async function shutdown() {
+        if (voiceBridge) await voiceBridge.close().catch(() => {})
         if (leafBridge) await leafBridge.close().catch(() => {})
         clearInterval(statusTimer)
         quota.stop()
