@@ -22,12 +22,20 @@ function registryRange(spec) {
     return `^${dep.version}`
 }
 
-const dependencies = Object.fromEntries(
-    Object.entries(pkg.dependencies).map(([name, spec]) => [
-        name,
-        spec.startsWith('file:') ? registryRange(spec) : spec,
-    ])
-)
+function mapDeps(deps) {
+    return Object.fromEntries(
+        Object.entries(deps ?? {}).map(([name, spec]) => [
+            name,
+            spec.startsWith('file:') ? registryRange(spec) : spec,
+        ])
+    )
+}
+
+const dependencies = mapDeps(pkg.dependencies)
+// optionalDependencies (e.g. @abandonware/noble for `provision-leaf`) must be
+// carried through too, or the published CLI can never load the optional BLE
+// transport even on a host that has the radio.
+const optionalDependencies = mapDeps(pkg.optionalDependencies)
 
 const distPkg = {
     name: pkg.name,
@@ -47,6 +55,7 @@ const distPkg = {
     bugs: { url: 'https://github.com/romme86/listam-headless/issues' },
     keywords: ['listam', 'p2p', 'local-first', 'hyperswarm', 'autobase', 'raspberry-pi', 'self-hosted'],
     dependencies,
+    ...(Object.keys(optionalDependencies).length ? { optionalDependencies } : {}),
 }
 
 fs.rmSync(stageDir, { recursive: true, force: true })

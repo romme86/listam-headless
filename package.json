@@ -20,6 +20,7 @@
     "@listam/domain": "file:../listam-packages/packages/domain",
     "@listam/logging": "file:../listam-packages/packages/logging",
     "@listam/protocol": "file:../listam-packages/packages/protocol",
+    "@listam/provisioning": "file:../listam-packages/packages/provisioning",
     "@listam/secrets": "file:../listam-packages/packages/secrets",
     "b4a": "^1.7.1",
     "corestore": "^7.5.0",
@@ -28,12 +29,16 @@
     "hyperdht": "^6.27.0",
     "@listam/owner-control": "file:../listam-packages/packages/owner-control"
   },
+  "optionalDependencies": {
+    "@abandonware/noble": "^1.9.2-26"
+  },
   "devDependencies": {
     "eslint": "^9.39.1",
     "typescript-eslint": "^8.46.4"
   },
   "overrides": {
     "@listam/protocol": "file:../listam-packages/packages/protocol",
+    "@listam/provisioning": "file:../listam-packages/packages/provisioning",
     "@listam/domain": "file:../listam-packages/packages/domain",
     "@listam/logging": "file:../listam-packages/packages/logging",
     "@listam/secrets": "file:../listam-packages/packages/secrets",

@@ -98,11 +98,18 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
     // Optional TCP bridge for leaf peers (hardware/leaf-peer): replicate the
     // corestore to dumb always-on mirrors (e.g. the ESP32-S3 leaf).
     let leafBridge = null
+    // The LAN address(es) a leaf should dial back to. Surfaced in the status
+    // snapshot so apps that provision a leaf over their own BLE radio (e.g.
+    // mobile) can read the control key + this address from a paired hub.
+    let leafHubAddr = null
     const leafBridgePort = Number(process.env.LISTAM_LEAF_BRIDGE_PORT ?? config.leafBridgePort ?? 0)
     if (leafBridgePort > 0) {
         const { startLeafBridge } = await import('@listam/backend/lib/leaf-bridge.mjs')
         try {
             leafBridge = await startLeafBridge({ port: leafBridgePort, logger })
+            const os = await import('node:os')
+            const { detectHubAddr } = await import('./provision-ble.mjs')
+            leafHubAddr = detectHubAddr(os.default ?? os, leafBridgePort)
         } catch (err) {
             logger?.log?.('[ERROR] leaf-bridge failed to start:', err?.message ?? err)
         }
@@ -197,7 +204,19 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             peerCount: state.peerCount,
             itemCount: state.items.length,
             inviteActive: state.inviteKey.length > 0,
-            leafBridge: leafBridge ? { port: leafBridge.port, controlKey: leafBridge.controlKey } : null,
+            leafBridge: leafBridge
+                ? {
+                      port: leafBridge.port,
+                      controlKey: leafBridge.controlKey,
+                      hubAddr: leafHubAddr,
+                      // The audio sink the leaf streams voice to (same host IPs,
+                      // the voice bridge's port) — only when voice is enabled.
+                      audioAddr:
+                          voiceBridge && leafHubAddr
+                              ? leafHubAddr.replace(/:\d+/g, `:${voiceBridge.port}`)
+                              : null,
+                  }
+                : null,
             quota: { ...quota.check() },
             startedAt: state.startedAt,
         }
@@ -239,7 +258,9 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
 
     async function handleOp(request) {
         const op = OP_ALIASES[request.op] ?? request.op
-        const timeoutMs = op === 'join' ? JOIN_OP_TIMEOUT_MS : OP_TIMEOUT_MS
+        // join waits on P2P sync; provision-leaf waits on a BLE scan + write —
+        // both legitimately exceed the default op timeout.
+        const timeoutMs = op === 'join' || op === 'provision-leaf' ? JOIN_OP_TIMEOUT_MS : OP_TIMEOUT_MS
         let timer = null
         const timedOut = new Promise((resolve) => {
             timer = setTimeout(() => {
@@ -337,6 +358,13 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
                     imported++
                 }
                 return { imported }
+            }
+            case 'provision-leaf': {
+                // Initialize an ESP32 leaf over BLE with this hub's control key +
+                // address and the operator-supplied WiFi creds. Local-radio only:
+                // deliberately absent from the owner-control remote executor.
+                const { runProvisionLeaf } = await import('./provision-ble.mjs')
+                return runProvisionLeaf(request, { leafBridge, logger })
             }
             case 'shutdown':
                 return { shutdown: true }

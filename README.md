@@ -86,12 +86,23 @@ answers one JSON line per request:
 {"id":8,"op":"dump"}                           # alias: dump-list
 {"id":9,"op":"export","path":"backup.json"}
 {"id":10,"op":"import","path":"backup.json"}   # upserts by stable id
-{"id":11,"op":"shutdown"}
+{"id":11,"op":"provision-leaf","ssid":"<wifi>","psk":"<pw>"}  # pair an ESP32 leaf over BLE
+{"id":12,"op":"shutdown"}
 ```
 
 Blind mode adds `pin {key}` and `peek {index}` (diagnostics: returns the
 locally stored block — ciphertext by construction). The request `id` is the
 correlation id; item references always use `itemId`.
+
+`provision-leaf` initializes a nearby ESP32 leaf over Bluetooth: it writes the
+operator-supplied WiFi credentials plus this hub's control key and
+auto-detected LAN address into the leaf, which then dials back over WiFi and
+mirrors this project. It requires the leaf bridge to be running
+(`LISTAM_LEAF_BRIDGE_PORT=9993`) and the **optional** `@abandonware/noble`
+dependency on a host with a BLE radio (Linux: BlueZ; macOS: CoreBluetooth). On
+a Bluetooth-less host it returns `{ ok: false, reason: "ble-unavailable" }`
+rather than failing, and `npx listam-headless` installs fine without it. It is
+an operator-only op — never exposed over the remote owner-control channel.
 
 The remote owner-control channel (configure/inspect from mobile/desktop
 without a shell) is Phase 14; until then stdin under the operator's
