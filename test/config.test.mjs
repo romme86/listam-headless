@@ -10,6 +10,7 @@ import {
     saveConfig,
     parseBootstrap,
     normalizeBaseKeyHex,
+    normalizeVoiceConfig,
     DEFAULT_MAX_STORAGE_BYTES,
 } from '../src/config.mjs'
 
@@ -41,6 +42,26 @@ test('base keys must be 32-byte hex', () => {
     assert.equal(normalizeBaseKeyHex('A'.repeat(64)), 'a'.repeat(64))
     assert.equal(normalizeBaseKeyHex('a'.repeat(63)), null)
     assert.equal(normalizeBaseKeyHex('z'.repeat(64)), null)
+})
+
+test('voice exec-confidence floors default sanely and accept config + env overrides', () => {
+    const def = normalizeVoiceConfig({}, {})
+    assert.deepEqual(def.execConfidence, { add_item: 0.75, remove_item: 0.9, note: 0.75 })
+    assert.ok(def.execConfidence.remove_item > 0.85, 'destructive remove floor must exceed the grammar max')
+
+    // config.voice.execConfidence overrides per intent; out-of-range/garbage falls back to the default.
+    const fromCfg = normalizeVoiceConfig({ execConfidence: { add_item: 0.5, remove_item: 1.2, note: 'x' } }, {})
+    assert.equal(fromCfg.execConfidence.add_item, 0.5)
+    assert.equal(fromCfg.execConfidence.remove_item, 0.9, 'a >1 value is rejected -> default')
+    assert.equal(fromCfg.execConfidence.note, 0.75, 'a non-number is rejected -> default')
+
+    // env wins over config and over the default.
+    const fromEnv = normalizeVoiceConfig(
+        { execConfidence: { remove_item: 0.95 } },
+        { LISTAM_VOICE_FLOOR_ADD: '0.9', LISTAM_VOICE_FLOOR_REMOVE: '0.99' },
+    )
+    assert.equal(fromEnv.execConfidence.add_item, 0.9)
+    assert.equal(fromEnv.execConfidence.remove_item, 0.99)
 })
 
 test('config round-trips through the storage dir and rejects corrupt files', (t) => {

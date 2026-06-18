@@ -122,7 +122,8 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             const { createStt } = await import('@listam/backend/lib/stt/index.mjs')
             const { startAudioBridge } = await import('@listam/backend/lib/audio-bridge.mjs')
             const { createVoiceController } = await import('@listam/backend/lib/voice-controller.mjs')
-            const { parseIntent } = await import('@listam/domain/voice-intent')
+            const { createVoiceFeedbackHandler } = await import('@listam/backend/lib/voice-feedback.mjs')
+            const { parseIntent, detectWake } = await import('@listam/domain/voice-intent')
             const { isRegistryItem } = await import('@listam/domain/list-registry')
 
             const stt = createStt({ engine: voiceCfg.engine, config: voiceCfg, logger })
@@ -135,20 +136,40 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
                 logger,
             })
 
+            // The leaf LED stays dark on the dB gate; it lights only from the
+            // feedback streamed back at each recognition milestone (yellow wake →
+            // purple command → green saved / red error). See voice-feedback.mjs.
+            const feedbackHandler = createVoiceFeedbackHandler({
+                stt, controller, parseIntent, detectWake, locale: voiceCfg.locale,
+                execFloors: voiceCfg.execConfidence, logger,
+            })
+
+            // Persist every received utterance into a training dataset (positives
+            // that fired the on-device "yo" wake + hard-negatives that only tripped
+            // the dB gate) so the real-life corpus accumulates on this always-on
+            // audio sink for future wake-model retraining. Off with
+            // LISTAM_VOICE_DATASET=0; dir via LISTAM_VOICE_DATASET_DIR.
+            let onUtterance = feedbackHandler
+            if (process.env.LISTAM_VOICE_DATASET !== '0') {
+                try {
+                    const { createUtteranceDataset } = await import('@listam/backend/lib/voice-dataset.mjs')
+                    const fsp = await import('node:fs/promises')
+                    const datasetDir = process.env.LISTAM_VOICE_DATASET_DIR || voiceCfg.datasetDir || `${storageDir}/voice-dataset`
+                    const dataset = createUtteranceDataset({ dir: datasetDir, fs: fsp.default ?? fsp, logger })
+                    onUtterance = (utterance, reply) => {
+                        dataset.save(utterance) // fire-and-forget; never blocks the live pipeline
+                        return feedbackHandler(utterance, reply)
+                    }
+                    logger?.log?.(`[voice] dataset capture on → ${datasetDir}`)
+                } catch (err) {
+                    logger?.log?.('[voice] dataset capture disabled:', err?.message ?? err)
+                }
+            }
+
             voiceBridge = await startAudioBridge({
                 tcp: net.default ?? net,
                 port: voiceCfg.audioPort,
-                onUtterance: async (utterance) => {
-                    try {
-                        if (!(await stt.available())) { logger?.log?.('[voice] STT unavailable — set config.voice.modelPath'); return }
-                        const { text, locale } = await stt.transcribe(utterance)
-                        const lang = locale && locale !== 'auto' ? locale : (voiceCfg.locale !== 'auto' ? voiceCfg.locale : 'en')
-                        const result = await controller.execute(parseIntent(text, lang))
-                        logger?.log?.(`[voice] "${text}" -> ${result.intent} (${result.code})`)
-                    } catch (err) {
-                        logger?.log?.('[ERROR] voice utterance failed:', err?.message ?? err)
-                    }
-                },
+                onUtterance,
                 logger,
             })
             logger?.log?.(`[voice] audio bridge listening on :${voiceBridge.port}`)

@@ -1,6 +1,8 @@
 // Headless instance configuration: which role this device performs, where it
 // stores data, how it bootstraps, and its storage quota. Written by `setup`,
 // read by `run`/`status`. The fs module is injected for testability.
+import { DEFAULT_EXEC_FLOORS } from '@listam/backend/lib/voice-feedback.mjs'
+
 export const ROLES = Object.freeze(['participant', 'blind-storage'])
 export const DEFAULT_MAX_STORAGE_BYTES = 1024 * 1024 * 1024 // 1 GiB
 export const DEFAULT_VOICE_PORT = 9994
@@ -12,14 +14,44 @@ export const DEFAULT_VOICE_PORT = 9994
 export function normalizeVoiceConfig(raw = {}, env = {}) {
     const r = raw && typeof raw === 'object' ? raw : {}
     const port = Number(env.LISTAM_VOICE_PORT ?? r.audioPort ?? DEFAULT_VOICE_PORT)
+    // STT decoder hints passed through to the whisper.cpp adapter as extraArgs.
+    // An initial prompt biases whisper toward the command vocabulary — short
+    // list-commands transcribe poorly without context (e.g. "add milk" merges
+    // to "Admilk"); seeding the expected words fixes most of it. config.extraArgs
+    // is appended verbatim for any other whisper-cli flag.
+    const prompt = env.LISTAM_VOICE_PROMPT ?? r.prompt ?? null
+    const extraArgs = []
+    if (prompt) extraArgs.push('--prompt', String(prompt))
+    if (Array.isArray(r.extraArgs)) extraArgs.push(...r.extraArgs.map(String))
     return {
         enabled: env.LISTAM_VOICE_ENABLED === '1' || r.enabled === true,
         engine: r.engine || 'whisper-cpp',
         binPath: env.LISTAM_VOICE_BIN || r.binPath || 'whisper-cli',
         modelPath: env.LISTAM_VOICE_MODEL || r.modelPath || null,
         audioPort: Number.isInteger(port) && port > 0 && port < 65536 ? port : DEFAULT_VOICE_PORT,
-        locale: r.locale || 'auto',
+        locale: env.LISTAM_VOICE_LOCALE || r.locale || 'auto',
         notesListId: r.notesListId || 'voicenotes',
+        execConfidence: normalizeExecFloors(r.execConfidence, env),
+        extraArgs,
+    }
+}
+
+// Per-intent write-gate confidence floors (see voice-feedback.shouldExecuteIntent).
+// Until a real wake-word model lands, a command without a clean wake word must
+// clear its floor to execute; this keeps ambient speech that merely parses from
+// mutating lists, with the strictest bar on the destructive remove. Defaults come
+// from DEFAULT_EXEC_FLOORS so the policy has a single source of truth. Each floor
+// is overridable from config.voice.execConfidence or a LISTAM_VOICE_FLOOR_* env.
+function normalizeExecFloors(raw = {}, env = {}) {
+    const ec = raw && typeof raw === 'object' ? raw : {}
+    const floor = (envKey, value, dflt) => {
+        const v = Number(env[envKey] ?? value)
+        return Number.isFinite(v) && v >= 0 && v <= 1 ? v : dflt
+    }
+    return {
+        add_item: floor('LISTAM_VOICE_FLOOR_ADD', ec.add_item, DEFAULT_EXEC_FLOORS.add_item),
+        remove_item: floor('LISTAM_VOICE_FLOOR_REMOVE', ec.remove_item, DEFAULT_EXEC_FLOORS.remove_item),
+        note: floor('LISTAM_VOICE_FLOOR_NOTE', ec.note, DEFAULT_EXEC_FLOORS.note),
     }
 }
 
