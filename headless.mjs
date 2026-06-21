@@ -73,6 +73,7 @@ async function main() {
             baseKeyHex: args['base-key'],
             bootstrap: args.bootstrap,
             maxStorageBytes: args['max-storage-bytes'] ? Number(args['max-storage-bytes']) : undefined,
+            name: typeof args.name === 'string' ? args.name : undefined,
         })
         if (!built.ok) fail(built.reason)
         saveConfig(fs, storageDir, built.config)

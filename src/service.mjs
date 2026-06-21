@@ -27,6 +27,7 @@ import {
     RPC_GET_MEMBERS,
     RPC_REMOVE_MEMBER,
 } from '@listam/protocol'
+import { buildPeerLabelItem, isLabelItem } from '@listam/domain/labels'
 import { writeStatus } from './status.mjs'
 import { createQuotaMonitor } from './quota.mjs'
 import { normalizeVoiceConfig } from './config.mjs'
@@ -81,9 +82,31 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             if (payload?.type === 'join-success') state.joined = true
             // Boot-time truth for restarted guests (no live join-success).
             if (payload?.type === 'base-state') state.joined = payload.joined === true
-            if (payload?.type === 'membership-roster') state.roster = payload.roster ?? null
+            if (payload?.type === 'membership-roster') {
+                state.roster = payload.roster ?? null
+                // The roster is where this node first learns its own writer key
+                // (the isSelf writer), so advertise the configured name now.
+                maybeAdvertiseName()
+            }
         }
     })
+
+    // This node's human-readable name, advertised to peers via a synced peer-label
+    // item (see @listam/domain/labels). LISTAM_INSTANCE_NAME overrides config.name.
+    const instanceName = (process.env.LISTAM_INSTANCE_NAME || config.name || '').trim().slice(0, 64)
+    let advertisedName = ''
+    function maybeAdvertiseName() {
+        if (!instanceName) return
+        const selfKey = state.roster?.writers?.find((w) => w.isSelf)?.writerKey
+        if (!selfKey) return
+        const signature = `${selfKey} ${instanceName}`
+        if (advertisedName === signature) return
+        advertisedName = signature
+        const synced = state.items.find((i) => isLabelItem(i) && i.id === selfKey && i.labelName === instanceName)
+        if (synced) return
+        const item = buildPeerLabelItem({ writerKey: selfKey, name: instanceName, updatedAt: now() })
+        channel.client.send(RPC_UPDATE, { item }).catch(() => {})
+    }
 
     const platform = createNodePlatform({
         argv: [storageDir, '', '', JSON.stringify(prepared.backendPayload)],
@@ -137,7 +160,9 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             const controller = createVoiceController({
                 addItem: async (text, listId, listType) => parseMutationReply(await channel.client.send(RPC_ADD, { text, listId, listType })).ok,
                 deleteItem: async (item) => parseMutationReply(await channel.client.send(RPC_DELETE, { item })).ok,
-                getAllItems: async () => state.items,
+                // Exclude label meta-items (peer/surface names) so a voice
+                // "remove …" can never substring-match and delete one.
+                getAllItems: async () => state.items.filter((i) => !isLabelItem(i)),
                 getRegistryItems: async () => state.items.filter(isRegistryItem),
                 notesListId: voiceCfg.notesListId,
                 logger,

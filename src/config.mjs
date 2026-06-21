@@ -87,7 +87,7 @@ export function normalizeBaseKeyHex(value) {
     return HEX_32.test(text) ? text : null
 }
 
-export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leafBridgePort }) {
+export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leafBridgePort, name }) {
     const normalizedRole = normalizeRole(role)
     if (!normalizedRole) {
         return { ok: false, reason: `role must be one of: ${ROLES.join(', ')}` }
@@ -100,6 +100,13 @@ export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leaf
             ? Math.floor(maxStorageBytes)
             : DEFAULT_MAX_STORAGE_BYTES,
     }
+
+    // Human-readable instance name advertised to peers (e.g. "Raspberry Pi").
+    // A headless node has no UI, so it names itself from config; the service
+    // writes a synced peer-label item on boot. Overridable at runtime with
+    // LISTAM_INSTANCE_NAME. Clamped to 64 chars (matches @listam/domain MAX_LABEL_NAME).
+    const cleanName = typeof name === 'string' ? name.trim().slice(0, 64) : ''
+    if (cleanName) config.name = cleanName
 
     const parsedBootstrap = parseBootstrap(bootstrap)
     if (parsedBootstrap) config.bootstrap = parsedBootstrap
