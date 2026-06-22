@@ -7,6 +7,21 @@ export const ROLES = Object.freeze(['participant', 'blind-storage'])
 export const DEFAULT_MAX_STORAGE_BYTES = 1024 * 1024 * 1024 // 1 GiB
 export const DEFAULT_VOICE_PORT = 9994
 
+// Per-locale initial whisper prompt, applied only when no explicit prompt is set
+// AND the locale is a concrete language (never 'auto'). Two jobs: bias whisper
+// toward the list-command vocabulary (anti-merge, e.g. "add milk" not "Admilk")
+// and reinforce the spoken language so e.g. Italian audio stops drifting to
+// English. Keep it short — verbs + a few frequent nouns; a long prompt over-anchors.
+// DUPLICATED in listam-desktop/src/voice-host-worker.mjs (polyrepo; keep in sync).
+export const DEFAULT_VOICE_PROMPTS = Object.freeze({
+    en: 'yo add milk. yo add bread. yo remove eggs. grocery list: milk, bread, eggs, tomatoes, pasta, coffee.',
+    it: 'yo aggiungi latte. yo aggiungi pane. yo togli uova. lista della spesa: latte, pane, uova, pomodori, pasta, caffè.',
+    es: 'yo añade leche. yo añade pan. yo quita huevos. lista de la compra: leche, pan, huevos, tomates, pasta, café.',
+    de: 'yo füge Milch hinzu. yo füge Brot hinzu. yo entferne Eier. Einkaufsliste: Milch, Brot, Eier, Tomaten, Nudeln, Kaffee.',
+    fr: 'yo ajoute du lait. yo ajoute du pain. yo enlève les œufs. liste de courses : lait, pain, œufs, tomates, pâtes, café.',
+    pt: 'yo adiciona leite. yo adiciona pão. yo remove ovos. lista de compras: leite, pão, ovos, tomates, massa, café.',
+})
+
 // Voice assistant config (off by default). Reads an optional `voice` block from
 // headless-config.json with env overrides, so a leaf can stream audio here for
 // transcription + command execution. modelPath must point at a whisper.cpp GGML
@@ -19,9 +34,14 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
     // list-commands transcribe poorly without context (e.g. "add milk" merges
     // to "Admilk"); seeding the expected words fixes most of it. config.extraArgs
     // is appended verbatim for any other whisper-cli flag.
+    const locale = env.LISTAM_VOICE_LOCALE || r.locale || 'auto'
+    // An explicit prompt always wins; otherwise fall back to the built-in
+    // per-locale default, but only for a concrete locale (never 'auto', or we'd
+    // anchor auto-detected audio to one language).
     const prompt = env.LISTAM_VOICE_PROMPT ?? r.prompt ?? null
+    const effectivePrompt = prompt ?? (locale !== 'auto' ? (DEFAULT_VOICE_PROMPTS[locale] ?? null) : null)
     const extraArgs = []
-    if (prompt) extraArgs.push('--prompt', String(prompt))
+    if (effectivePrompt) extraArgs.push('--prompt', String(effectivePrompt))
     if (Array.isArray(r.extraArgs)) extraArgs.push(...r.extraArgs.map(String))
     return {
         enabled: env.LISTAM_VOICE_ENABLED === '1' || r.enabled === true,
@@ -29,7 +49,7 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
         binPath: env.LISTAM_VOICE_BIN || r.binPath || 'whisper-cli',
         modelPath: env.LISTAM_VOICE_MODEL || r.modelPath || null,
         audioPort: Number.isInteger(port) && port > 0 && port < 65536 ? port : DEFAULT_VOICE_PORT,
-        locale: env.LISTAM_VOICE_LOCALE || r.locale || 'auto',
+        locale,
         notesListId: r.notesListId || 'voicenotes',
         execConfidence: normalizeExecFloors(r.execConfidence, env),
         extraArgs,

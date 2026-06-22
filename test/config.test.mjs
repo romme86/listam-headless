@@ -11,6 +11,7 @@ import {
     parseBootstrap,
     normalizeBaseKeyHex,
     normalizeVoiceConfig,
+    DEFAULT_VOICE_PROMPTS,
     DEFAULT_MAX_STORAGE_BYTES,
 } from '../src/config.mjs'
 
@@ -62,6 +63,32 @@ test('voice exec-confidence floors default sanely and accept config + env overri
     )
     assert.equal(fromEnv.execConfidence.add_item, 0.9)
     assert.equal(fromEnv.execConfidence.remove_item, 0.99)
+})
+
+test('voice prompt: per-locale default applies for a concrete locale, never for auto, and is overridable', () => {
+    // a concrete locale with no explicit prompt -> the built-in default for it
+    assert.deepEqual(
+        normalizeVoiceConfig({ locale: 'it' }, {}).extraArgs,
+        ['--prompt', DEFAULT_VOICE_PROMPTS.it],
+    )
+    // auto (the default) must NOT anchor to any language
+    assert.deepEqual(normalizeVoiceConfig({}, {}).extraArgs, [])
+    assert.deepEqual(normalizeVoiceConfig({ locale: 'auto' }, {}).extraArgs, [])
+    // an explicit prompt always wins over the per-locale default
+    assert.deepEqual(
+        normalizeVoiceConfig({ locale: 'it', prompt: 'custom words' }, {}).extraArgs,
+        ['--prompt', 'custom words'],
+    )
+    // env prompt also wins
+    assert.deepEqual(
+        normalizeVoiceConfig({ locale: 'it' }, { LISTAM_VOICE_PROMPT: 'env words' }).extraArgs,
+        ['--prompt', 'env words'],
+    )
+    // user extraArgs are appended after the default prompt
+    assert.deepEqual(
+        normalizeVoiceConfig({ locale: 'it', extraArgs: ['-t', '4'] }, {}).extraArgs,
+        ['--prompt', DEFAULT_VOICE_PROMPTS.it, '-t', '4'],
+    )
 })
 
 test('config round-trips through the storage dir and rejects corrupt files', (t) => {
