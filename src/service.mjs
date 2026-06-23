@@ -26,6 +26,9 @@ import {
     RPC_REQUEST_SYNC,
     RPC_GET_MEMBERS,
     RPC_REMOVE_MEMBER,
+    RPC_LIST_BACKUPS,
+    RPC_RESTORE_BACKUP,
+    RPC_SET_BACKUP_PASSWORD,
 } from '@listam/protocol'
 import { buildPeerLabelItem, isLabelItem } from '@listam/domain/labels'
 import { writeStatus } from './status.mjs'
@@ -264,6 +267,16 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
         }
     }
 
+    // Backup ops surface the backend's full JSON outcome ({ ok, backups, ... }).
+    function parseBackupReply(raw) {
+        if (raw == null) return { ok: false, message: 'no reply from backend' }
+        try {
+            return typeof raw === 'string' ? JSON.parse(raw) : raw
+        } catch {
+            return { ok: false, message: 'unparseable backup reply' }
+        }
+    }
+
     function mutationRefused(reply) {
         return {
             ok: false,
@@ -345,6 +358,20 @@ export async function startHeadlessService({ fs, storageDir, config, logger, now
             case 'sync':
                 await channel.client.send(RPC_REQUEST_SYNC)
                 return {}
+            case 'set-backup-password':
+                // Required before pre-join auto-backups run. { password, current? }.
+                return parseBackupReply(await channel.client.send(RPC_SET_BACKUP_PASSWORD, {
+                    next: request.password,
+                    current: request.current,
+                }))
+            case 'list-backups':
+                return parseBackupReply(await channel.client.send(RPC_LIST_BACKUPS))
+            case 'restore-backup':
+                // { file, password } — decrypt + merge a pre-join auto-backup.
+                return parseBackupReply(await channel.client.send(RPC_RESTORE_BACKUP, {
+                    file: request.file,
+                    password: request.password,
+                }))
             case 'members':
                 await channel.client.send(RPC_GET_MEMBERS)
                 return { roster: state.roster }
