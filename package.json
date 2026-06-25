@@ -1,6 +1,6 @@
 {
   "name": "listam-headless",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "main": "headless.mjs",
@@ -19,15 +19,15 @@
     "@listam/client": "file:../listam-packages/packages/client",
     "@listam/domain": "file:../listam-packages/packages/domain",
     "@listam/logging": "file:../listam-packages/packages/logging",
+    "@listam/owner-control": "file:../listam-packages/packages/owner-control",
     "@listam/protocol": "file:../listam-packages/packages/protocol",
     "@listam/provisioning": "file:../listam-packages/packages/provisioning",
     "@listam/secrets": "file:../listam-packages/packages/secrets",
     "b4a": "^1.7.1",
     "corestore": "^7.5.0",
     "hypercore-crypto": "^3.6.1",
-    "hyperswarm": "^4.12.1",
     "hyperdht": "^6.27.0",
-    "@listam/owner-control": "file:../listam-packages/packages/owner-control"
+    "hyperswarm": "^4.12.1"
   },
   "optionalDependencies": {
     "@abandonware/noble": "^1.9.2-26"
