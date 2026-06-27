@@ -74,6 +74,12 @@ async function main() {
             bootstrap: args.bootstrap,
             maxStorageBytes: args['max-storage-bytes'] ? Number(args['max-storage-bytes']) : undefined,
             name: typeof args.name === 'string' ? args.name : undefined,
+            // Scheduled-backup knobs (participant-only). --no-backup-schedule
+            // persists the schedule off; --backup-password seeds the encryption
+            // password so a fresh box gets rolling backups non-interactively.
+            // Prefer LISTAM_BACKUP_PASSWORD env to keep secrets out of argv/history.
+            backupScheduled: args['no-backup-schedule'] === true ? false : undefined,
+            backupPassword: typeof args['backup-password'] === 'string' ? args['backup-password'] : undefined,
         })
         if (!built.ok) fail(built.reason)
         saveConfig(fs, storageDir, built.config)
@@ -143,6 +149,15 @@ async function main() {
             case 'import':
                 if (config.role === 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
                 return instance.handleOp({ op: 'import', data: payload?.data })
+            case 'backup-schedule':
+                // Observe (no payload.enabled) or toggle the rolling backup
+                // schedule remotely. A blind-storage peer holds no decryptable
+                // data, so there is nothing to back up.
+                if (config.role === 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                if (payload && typeof payload.enabled === 'boolean') {
+                    return instance.handleOp({ op: 'set-backup-schedule', enabled: payload.enabled })
+                }
+                return instance.handleOp({ op: 'list-backups' })
             case 'topics':
                 if (config.role !== 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
                 if (payload?.action !== 'pin') return { ok: false, reason: 'unknown-topics-action' }

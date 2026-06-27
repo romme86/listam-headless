@@ -56,6 +56,27 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
     }
 }
 
+// Scheduled-backup config (rolling 15-min / daily / weekly tiers). The scheduler
+// itself lives in @listam/backend and starts automatically once a backup password
+// is set; this block only carries the two operator knobs a headless box needs to
+// bootstrap non-interactively: whether the schedule is on, and an optional password
+// to seed so a fresh box gets scheduled backups with zero interactive steps.
+//   LISTAM_BACKUP_SCHEDULED (true/false) overrides scheduledEnabled.
+//   LISTAM_BACKUP_PASSWORD overrides password.
+// The password is the same two-factor secret as pre-join auto-backups (device key +
+// this value); it is never logged (the logger deep-redacts) and only used to call
+// RPC_SET_BACKUP_PASSWORD on startup when no password is set yet.
+export function normalizeBackupConfig(raw = {}, env = {}) {
+    const r = raw && typeof raw === 'object' ? raw : {}
+    const envEnabled = env.LISTAM_BACKUP_SCHEDULED
+    const scheduledEnabled = typeof envEnabled === 'string' && envEnabled.trim()
+        ? !/^(0|false|no|off)$/i.test(envEnabled.trim())
+        : r.scheduledEnabled !== false
+    const rawPassword = env.LISTAM_BACKUP_PASSWORD ?? r.password
+    const password = typeof rawPassword === 'string' && rawPassword.length > 0 ? rawPassword : null
+    return { scheduledEnabled, password }
+}
+
 // Per-intent write-gate confidence floors (see voice-feedback.shouldExecuteIntent).
 // Until a real wake-word model lands, a command without a clean wake word must
 // clear its floor to execute; this keeps ambient speech that merely parses from
@@ -107,7 +128,7 @@ export function normalizeBaseKeyHex(value) {
     return HEX_32.test(text) ? text : null
 }
 
-export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leafBridgePort, name }) {
+export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leafBridgePort, name, backupScheduled, backupPassword }) {
     const normalizedRole = normalizeRole(role)
     if (!normalizedRole) {
         return { ok: false, reason: `role must be one of: ${ROLES.join(', ')}` }
@@ -134,6 +155,16 @@ export function buildConfig({ role, baseKeyHex, bootstrap, maxStorageBytes, leaf
     const parsedLeafPort = Number(leafBridgePort)
     if (Number.isInteger(parsedLeafPort) && parsedLeafPort > 0 && parsedLeafPort < 65536) {
         config.leafBridgePort = parsedLeafPort
+    }
+
+    // Scheduled-backup knobs (participant-only — a blind-storage peer holds no
+    // decryptable data to back up). Only persist a `backup` block when a knob is
+    // actually set so existing configs stay byte-identical when nothing is asked.
+    if (normalizedRole === 'participant') {
+        const backup = {}
+        if (backupScheduled === false) backup.scheduledEnabled = false
+        if (typeof backupPassword === 'string' && backupPassword.length > 0) backup.password = backupPassword
+        if (Object.keys(backup).length > 0) config.backup = backup
     }
 
     if (normalizedRole === 'blind-storage') {

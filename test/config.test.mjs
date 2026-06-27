@@ -11,6 +11,7 @@ import {
     parseBootstrap,
     normalizeBaseKeyHex,
     normalizeVoiceConfig,
+    normalizeBackupConfig,
     DEFAULT_VOICE_PROMPTS,
     DEFAULT_MAX_STORAGE_BYTES,
 } from '../src/config.mjs'
@@ -89,6 +90,49 @@ test('voice prompt: per-locale default applies for a concrete locale, never for 
         normalizeVoiceConfig({ locale: 'it', extraArgs: ['-t', '4'] }, {}).extraArgs,
         ['--prompt', DEFAULT_VOICE_PROMPTS.it, '-t', '4'],
     )
+})
+
+test('backup config: schedule defaults on, env/config can disable, password optional and never defaulted', () => {
+    // default: schedule on, no password
+    assert.deepEqual(normalizeBackupConfig({}, {}), { scheduledEnabled: true, password: null })
+    assert.deepEqual(normalizeBackupConfig(undefined, {}), { scheduledEnabled: true, password: null })
+
+    // config disables; password carried through verbatim
+    assert.deepEqual(
+        normalizeBackupConfig({ scheduledEnabled: false, password: 'hunter2' }, {}),
+        { scheduledEnabled: false, password: 'hunter2' },
+    )
+
+    // env LISTAM_BACKUP_SCHEDULED overrides (false-ish strings disable)
+    assert.equal(normalizeBackupConfig({ scheduledEnabled: true }, { LISTAM_BACKUP_SCHEDULED: 'false' }).scheduledEnabled, false)
+    assert.equal(normalizeBackupConfig({ scheduledEnabled: false }, { LISTAM_BACKUP_SCHEDULED: 'true' }).scheduledEnabled, true)
+    assert.equal(normalizeBackupConfig({}, { LISTAM_BACKUP_SCHEDULED: '0' }).scheduledEnabled, false)
+    assert.equal(normalizeBackupConfig({}, { LISTAM_BACKUP_SCHEDULED: 'off' }).scheduledEnabled, false)
+
+    // env password wins over config; empty string is treated as no password
+    assert.equal(normalizeBackupConfig({ password: 'cfg' }, { LISTAM_BACKUP_PASSWORD: 'env' }).password, 'env')
+    assert.equal(normalizeBackupConfig({ password: '' }, {}).password, null)
+})
+
+test('buildConfig persists a backup block only for participants and only when a knob is set', () => {
+    // nothing asked -> no backup block (config stays byte-identical to before)
+    assert.equal('backup' in buildConfig({ role: 'participant' }).config, false)
+
+    // disabling the schedule persists scheduledEnabled:false
+    assert.deepEqual(
+        buildConfig({ role: 'participant', backupScheduled: false }).config.backup,
+        { scheduledEnabled: false },
+    )
+
+    // a password seeds the block
+    assert.deepEqual(
+        buildConfig({ role: 'participant', backupPassword: 's3cret' }).config.backup,
+        { password: 's3cret' },
+    )
+
+    // blind-storage never carries a backup block (no decryptable data)
+    const blind = buildConfig({ role: 'blind-storage', baseKeyHex: 'a'.repeat(64), backupPassword: 'x', backupScheduled: false })
+    assert.equal('backup' in blind.config, false)
 })
 
 test('config round-trips through the storage dir and rejects corrupt files', (t) => {
