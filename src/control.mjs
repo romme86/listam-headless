@@ -67,6 +67,11 @@ export async function startOwnerControl({ fs, storageDir, config, executor, onSh
     const server = dht.createServer((socket) => {
         socket.on('error', () => {})
         const rl = readline.createInterface({ input: socket })
+        // readline re-emits input-stream errors on the Interface itself; without
+        // this handler an abrupt client disconnect (ECONNRESET) crashes the
+        // whole service (observed 2026-07-02 when a phone dropped mid-session).
+        rl.on('error', () => {})
+        socket.on('close', () => rl.close())
         rl.on('line', async (line) => {
             let message = null
             try {
