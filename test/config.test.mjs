@@ -92,6 +92,41 @@ test('voice prompt: per-locale default applies for a concrete locale, never for 
     )
 })
 
+test('voice engine + warm-server knobs: binPath follows engine, audioCtx -> -ac, caps validated', () => {
+    // defaults: per-utterance whisper-cli engine, no cap, no -ac, no server port
+    const def = normalizeVoiceConfig({}, {})
+    assert.equal(def.engine, 'whisper-cpp')
+    assert.equal(def.binPath, 'whisper-cli')
+    assert.equal(def.maxUtteranceSeconds, null)
+    assert.equal(def.serverPort, undefined)
+
+    // engine whisper-server flips the default binary; an explicit binPath wins
+    const srv = normalizeVoiceConfig({ engine: 'whisper-server' }, {})
+    assert.equal(srv.engine, 'whisper-server')
+    assert.equal(srv.binPath, 'whisper-server')
+    assert.equal(normalizeVoiceConfig({ engine: 'whisper-server', binPath: '/opt/ws' }, {}).binPath, '/opt/ws')
+    assert.equal(normalizeVoiceConfig({}, { LISTAM_VOICE_ENGINE: 'whisper-server' }).engine, 'whisper-server')
+
+    // audioCtx becomes a whisper -ac flag, before user extraArgs (so they win)
+    assert.deepEqual(
+        normalizeVoiceConfig({ audioCtx: 768, extraArgs: ['-t', '4'] }, {}).extraArgs,
+        ['-ac', '768', '-t', '4'],
+    )
+    assert.deepEqual(normalizeVoiceConfig({ audioCtx: 0 }, {}).extraArgs, [])
+    assert.deepEqual(normalizeVoiceConfig({ audioCtx: 'garbage' }, {}).extraArgs, [])
+    assert.deepEqual(normalizeVoiceConfig({}, { LISTAM_VOICE_AUDIO_CTX: '512' }).extraArgs, ['-ac', '512'])
+
+    // utterance cap: positive seconds pass through, garbage/zero -> null
+    assert.equal(normalizeVoiceConfig({ maxUtteranceSeconds: 4 }, {}).maxUtteranceSeconds, 4)
+    assert.equal(normalizeVoiceConfig({ maxUtteranceSeconds: -1 }, {}).maxUtteranceSeconds, null)
+    assert.equal(normalizeVoiceConfig({}, { LISTAM_VOICE_MAX_SECONDS: '4' }).maxUtteranceSeconds, 4)
+
+    // serverPort: validated like audioPort
+    assert.equal(normalizeVoiceConfig({ serverPort: 9095 }, {}).serverPort, 9095)
+    assert.equal(normalizeVoiceConfig({ serverPort: 99999 }, {}).serverPort, undefined)
+    assert.equal(normalizeVoiceConfig({}, { LISTAM_VOICE_SERVER_PORT: '9096' }).serverPort, 9096)
+})
+
 test('backup config: schedule defaults on, env/config can disable, password optional and never defaulted', () => {
     // default: schedule on, no password
     assert.deepEqual(normalizeBackupConfig({}, {}), { scheduledEnabled: true, password: null })

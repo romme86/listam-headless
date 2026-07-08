@@ -42,17 +42,37 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
     const effectivePrompt = prompt ?? (locale !== 'auto' ? (DEFAULT_VOICE_PROMPTS[locale] ?? null) : null)
     const extraArgs = []
     if (effectivePrompt) extraArgs.push('--prompt', String(effectivePrompt))
+    // Encoder audio-context cap (whisper -ac). Whisper always pads audio to a
+    // fixed 30 s window (1500 audio-ctx frames); short list-commands pay that
+    // full encoder cost for ~3 s of speech. -ac N caps the encoder window
+    // (N/1500 × 30 s), e.g. 768 ≈ 15.4 s — a measured ~2.7x encoder cut on real
+    // utterances with the transcript unchanged. Keep ≥768 and a multiple of 64
+    // (upstream guidance: lower degrades accuracy). 0/absent = full window.
+    const audioCtx = Number(env.LISTAM_VOICE_AUDIO_CTX ?? r.audioCtx ?? 0)
+    if (Number.isInteger(audioCtx) && audioCtx > 0) extraArgs.push('-ac', String(audioCtx))
     if (Array.isArray(r.extraArgs)) extraArgs.push(...r.extraArgs.map(String))
+    // Hard cap on utterance length accepted from the leaf (seconds). Bounds the
+    // STT window server-side even before the leaf firmware's own capture cap is
+    // reflashed: audio past the cap is dropped and transcription starts at the
+    // cap. 0/absent = the assembler default (30 s).
+    const maxSecs = Number(env.LISTAM_VOICE_MAX_SECONDS ?? r.maxUtteranceSeconds ?? 0)
+    const serverPort = Number(env.LISTAM_VOICE_SERVER_PORT ?? r.serverPort ?? 0)
+    const engine = env.LISTAM_VOICE_ENGINE || r.engine || 'whisper-cpp'
     return {
         enabled: env.LISTAM_VOICE_ENABLED === '1' || r.enabled === true,
-        engine: r.engine || 'whisper-cpp',
-        binPath: env.LISTAM_VOICE_BIN || r.binPath || 'whisper-cli',
+        engine,
+        // The binary matching the engine: whisper-server keeps a warm model,
+        // whisper-cli spawns per utterance. An explicit binPath always wins.
+        binPath: env.LISTAM_VOICE_BIN || r.binPath || (engine === 'whisper-server' ? 'whisper-server' : 'whisper-cli'),
         modelPath: env.LISTAM_VOICE_MODEL || r.modelPath || null,
         audioPort: Number.isInteger(port) && port > 0 && port < 65536 ? port : DEFAULT_VOICE_PORT,
+        // whisper-server engine only: local port the managed server binds on.
+        serverPort: Number.isInteger(serverPort) && serverPort > 0 && serverPort < 65536 ? serverPort : undefined,
         locale,
         notesListId: r.notesListId || 'voicenotes',
         execConfidence: normalizeExecFloors(r.execConfidence, env),
         extraArgs,
+        maxUtteranceSeconds: Number.isFinite(maxSecs) && maxSecs > 0 ? maxSecs : null,
     }
 }
 
