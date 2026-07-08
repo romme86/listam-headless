@@ -27,11 +27,15 @@ test('share-list promotes a list and returns an invite; bad inputs are rejected'
     const node = runHeadless(['run', '--storage', dir, '--bootstrap', bootstrapFlag(testnet)])
     await node.ready()
     try {
-        await node.request('add', { text: 'Milk' })
-        await node.waitFor((r) => r.items?.length === 1, { op: 'dump', timeoutMs: 30_000 })
+        // Only registry-backed NAMED lists are shareable — the built-in
+        // surfaces multiplex the reserved listId 'default' and sharing that
+        // would sweep all three surfaces into one base (the 2026-06-25
+        // multiplexed-default data-loss bug), so the backend refuses it.
+        await node.request('add', { text: 'Milk', listId: 'errands', listType: 'shopping' })
+        await node.waitFor((r) => r.items?.some((i) => i.text === 'Milk'), { op: 'dump', timeoutMs: 30_000 })
 
-        // Promote the default list into its own shared base.
-        const shared = await node.request('share-list', { listId: 'default' })
+        // Promote the named list into its own shared base.
+        const shared = await node.request('share-list', { listId: 'errands' })
         assert.equal(shared.ok, true, `share-list ok: ${JSON.stringify(shared)}`)
         assert.equal(typeof shared.invite, 'string')
         assert.ok(shared.invite.length > 0, 'share-list returned a co-edit invite')
@@ -53,6 +57,9 @@ test('share-list promotes a list and returns an invite; bad inputs are rejected'
         assert.equal(badJoin.ok, false, 'a malformed invite is rejected')
         const noList = await node.request('share-list', {})
         assert.equal(noList.ok, false, 'share-list requires a listId')
+        const builtin = await node.request('share-list', { listId: 'default' })
+        assert.equal(builtin.ok, false, 'the built-in default list is never shareable')
+        assert.equal(builtin.message, 'cannot-share-builtin')
     } finally {
         await node.stop()
     }
