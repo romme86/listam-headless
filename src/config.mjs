@@ -14,12 +14,12 @@ export const DEFAULT_VOICE_PORT = 9994
 // English. Keep it short — verbs + a few frequent nouns; a long prompt over-anchors.
 // DUPLICATED in listam-desktop/src/voice-host-worker.mjs (polyrepo; keep in sync).
 export const DEFAULT_VOICE_PROMPTS = Object.freeze({
-    en: 'yo add milk. yo add bread. yo remove eggs. grocery list: milk, bread, eggs, tomatoes, pasta, coffee.',
-    it: 'yo aggiungi latte. yo aggiungi pane. yo togli uova. lista della spesa: latte, pane, uova, pomodori, pasta, caffè.',
-    es: 'yo añade leche. yo añade pan. yo quita huevos. lista de la compra: leche, pan, huevos, tomates, pasta, café.',
-    de: 'yo füge Milch hinzu. yo füge Brot hinzu. yo entferne Eier. Einkaufsliste: Milch, Brot, Eier, Tomaten, Nudeln, Kaffee.',
-    fr: 'yo ajoute du lait. yo ajoute du pain. yo enlève les œufs. liste de courses : lait, pain, œufs, tomates, pâtes, café.',
-    pt: 'yo adiciona leite. yo adiciona pão. yo remove ovos. lista de compras: leite, pão, ovos, tomates, massa, café.',
+    en: 'petito add milk. yo petito add bread. yo petito remove eggs. grocery list: milk, bread, eggs, tomatoes, pasta, coffee.',
+    it: 'petito aggiungi latte. yo petito aggiungi pane. yo petito togli uova. lista della spesa: latte, pane, uova, pomodori, pasta, caffè.',
+    es: 'petito añade leche. yo petito añade pan. yo petito quita huevos. lista de la compra: leche, pan, huevos, tomates, pasta, café.',
+    de: 'petito füge Milch hinzu. yo petito füge Brot hinzu. yo petito entferne Eier. Einkaufsliste: Milch, Brot, Eier, Tomaten, Nudeln, Kaffee.',
+    fr: 'petito ajoute du lait. yo petito ajoute du pain. yo petito enlève les œufs. liste de courses : lait, pain, œufs, tomates, pâtes, café.',
+    pt: 'petito adiciona leite. yo petito adiciona pão. yo petito remove ovos. lista de compras: leite, pão, ovos, tomates, massa, café.',
 })
 
 // Voice assistant config (off by default). Reads an optional `voice` block from
@@ -98,11 +98,10 @@ export function normalizeBackupConfig(raw = {}, env = {}) {
 }
 
 // Per-intent write-gate confidence floors (see voice-feedback.shouldExecuteIntent).
-// Until a real wake-word model lands, a command without a clean wake word must
-// clear its floor to execute; this keeps ambient speech that merely parses from
-// mutating lists, with the strictest bar on the destructive remove. Defaults come
-// from DEFAULT_EXEC_FLOORS so the policy has a single source of truth. Each floor
-// is overridable from config.voice.execConfidence or a LISTAM_VOICE_FLOOR_* env.
+// Confidence floors used only when a caller explicitly enables the legacy
+// wake-optional policy. The default voice handler now requires the full
+// "yo petito" host transcript before any mutation. Each floor is overridable
+// from config.voice.execConfidence or a LISTAM_VOICE_FLOOR_* env.
 function normalizeExecFloors(raw = {}, env = {}) {
     const ec = raw && typeof raw === 'object' ? raw : {}
     const floor = (envKey, value, dflt) => {
