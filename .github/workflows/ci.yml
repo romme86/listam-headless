@@ -31,6 +31,15 @@ jobs:
         with:
           node-version: 22
 
+      # listam-packages must be installed too, not just checked out: node
+      # resolves a symlinked @listam/* package's own deps (b4a,
+      # hypercore-crypto, autobase, ...) from its REAL location, walking up to
+      # listam-packages/node_modules. Without this the app installs fine and
+      # then every test dies with ERR_MODULE_NOT_FOUND on a transitive dep.
+      - name: Install listam-packages workspace
+        working-directory: listam-packages
+        run: npm install --no-audit --no-fund
+
       # `npm install`, not `npm ci`: listam-packages is checked out at its own
       # HEAD, which need not match the revision this lockfile was resolved
       # against. install reconciles the file: links; ci would fail on the drift.
