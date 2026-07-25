@@ -20,7 +20,15 @@ export function runHeadless(args) {
     let exitCode = null
 
     proc.stderr.on('data', (chunk) => { stderr += chunk })
-    proc.on('exit', (code) => { exited = true; exitCode = code })
+
+    // ONE exit promise for the whole process, resolved by the single 'exit'
+    // listener below. `once(proc, 'exit')` per request attached a fresh exit AND
+    // error listener every time and never removed them while the process stayed
+    // alive, so any test making more than ~10 requests printed
+    // MaxListenersExceededWarning — noise that made real leaks unreadable.
+    let markExited
+    const exitedPromise = new Promise((resolve) => { markExited = resolve })
+    proc.on('exit', (code) => { exited = true; exitCode = code; markExited() })
     readline.createInterface({ input: proc.stdout }).on('line', (line) => {
         let message = null
         try {
@@ -43,7 +51,7 @@ export function runHeadless(args) {
         async ready() {
             const result = await Promise.race([
                 readyPromise,
-                once(proc, 'exit').then(() => null),
+                exitedPromise.then(() => null),
             ])
             if (!result) {
                 throw new Error(`headless exited before ready (code ${exitCode})\nstderr tail: ${stderr.slice(-2000)}`)
@@ -57,7 +65,7 @@ export function runHeadless(args) {
             const id = ++nextId
             const response = new Promise((resolve) => pending.set(id, resolve))
             proc.stdin.write(JSON.stringify({ ...fields, id, op }) + '\n')
-            const exitRejection = once(proc, 'exit').then(() => {
+            const exitRejection = exitedPromise.then(() => {
                 throw new Error(`headless exited mid-request '${op}' (code ${exitCode})\nstderr tail: ${stderr.slice(-2000)}`)
             })
             // The exit branch fires eventually even when the response won the
