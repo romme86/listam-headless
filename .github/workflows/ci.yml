@@ -21,7 +21,7 @@ jobs:
         with:
           path: listam-headless
 
-      - name: Checkout listam-packages (file: sibling dependency)
+      - name: Checkout listam-packages sibling
         uses: actions/checkout@v4
         with:
           repository: romme86/listam-packages
