@@ -14,12 +14,12 @@ export const DEFAULT_VOICE_PORT = 9994
 // English. Keep it short — verbs + a few frequent nouns; a long prompt over-anchors.
 // DUPLICATED in listam-desktop/src/voice-host-worker.mjs (polyrepo; keep in sync).
 export const DEFAULT_VOICE_PROMPTS = Object.freeze({
-    en: 'petito add milk. yo petito add bread. yo petito remove eggs. grocery list: milk, bread, eggs, tomatoes, pasta, coffee.',
-    it: 'petito aggiungi latte. yo petito aggiungi pane. yo petito togli uova. lista della spesa: latte, pane, uova, pomodori, pasta, caffè.',
-    es: 'petito añade leche. yo petito añade pan. yo petito quita huevos. lista de la compra: leche, pan, huevos, tomates, pasta, café.',
-    de: 'petito füge Milch hinzu. yo petito füge Brot hinzu. yo petito entferne Eier. Einkaufsliste: Milch, Brot, Eier, Tomaten, Nudeln, Kaffee.',
-    fr: 'petito ajoute du lait. yo petito ajoute du pain. yo petito enlève les œufs. liste de courses : lait, pain, œufs, tomates, pâtes, café.',
-    pt: 'petito adiciona leite. yo petito adiciona pão. yo petito remove ovos. lista de compras: leite, pão, ovos, tomates, massa, café.',
+    en: 'yo petito add milk. yo petito add bread. yo petito remove eggs. grocery list: milk, bread, eggs, tomatoes, pasta, coffee.',
+    it: 'yo petito aggiungi latte. yo petito aggiungi pane. yo petito togli uova. lista della spesa: latte, pane, uova, pomodori, pasta, caffè.',
+    es: 'yo petito añade leche. yo petito añade pan. yo petito quita huevos. lista de la compra: leche, pan, huevos, tomates, pasta, café.',
+    de: 'yo petito füge Milch hinzu. yo petito füge Brot hinzu. yo petito entferne Eier. Einkaufsliste: Milch, Brot, Eier, Tomaten, Nudeln, Kaffee.',
+    fr: 'yo petito ajoute du lait. yo petito ajoute du pain. yo petito enlève les œufs. liste de courses : lait, pain, œufs, tomates, pâtes, café.',
+    pt: 'yo petito adiciona leite. yo petito adiciona pão. yo petito remove ovos. lista de compras: leite, pão, ovos, tomates, massa, café.',
 })
 
 // Voice assistant config (off by default). Reads an optional `voice` block from

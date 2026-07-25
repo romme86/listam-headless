@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  ci:
+    name: lint + test
+    runs-on: ubuntu-latest
+    steps:
+      # This app depends on @listam/* via `file:../listam-packages/packages/*`.
+      # A single-repo checkout has no sibling directory, so npm cannot resolve
+      # them and every test importing a @listam package dies with
+      # ERR_MODULE_NOT_FOUND. Recreate the local sibling layout instead:
+      # $GITHUB_WORKSPACE/listam-headless + $GITHUB_WORKSPACE/listam-packages.
+      - name: Checkout listam-headless
+        uses: actions/checkout@v4
+        with:
+          path: listam-headless
+
+      - name: Checkout listam-packages (file: sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: romme86/listam-packages
+          path: listam-packages
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # `npm install`, not `npm ci`: listam-packages is checked out at its own
+      # HEAD, which need not match the revision this lockfile was resolved
+      # against. install reconciles the file: links; ci would fail on the drift.
+      - name: Install
+        working-directory: listam-headless
+        run: npm install --no-audit --no-fund
+
+      # Single entry point: CI runs exactly what a developer runs locally.
+      # Never reimplement the gate list here — change package.json instead.
+      # The suite spins up real peers on a private DHT testnet, so give it room.
+      - name: Gates
+        working-directory: listam-headless
+        run: npm run ci
+        timeout-minutes: 20
