@@ -6,6 +6,10 @@ import { DEFAULT_EXEC_FLOORS } from '@listam/backend/lib/voice-feedback.mjs'
 export const ROLES = Object.freeze(['participant', 'blind-storage'])
 export const DEFAULT_MAX_STORAGE_BYTES = 1024 * 1024 * 1024 // 1 GiB
 export const DEFAULT_VOICE_PORT = 9994
+// Voice training clips kept on disk before the oldest are pruned. Sized as a
+// share of DEFAULT_MAX_STORAGE_BYTES, not left at the writer's own 5000 default
+// (see normalizeVoiceConfig).
+export const DEFAULT_DATASET_MAX_FILES = 1500
 
 // Per-locale initial whisper prompt, applied only when no explicit prompt is set
 // AND the locale is a concrete language (never 'auto'). Two jobs: bias whisper
@@ -58,6 +62,14 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
     const maxSecs = Number(env.LISTAM_VOICE_MAX_SECONDS ?? r.maxUtteranceSeconds ?? 0)
     const serverPort = Number(env.LISTAM_VOICE_SERVER_PORT ?? r.serverPort ?? 0)
     const engine = env.LISTAM_VOICE_ENGINE || r.engine || 'whisper-cpp'
+    // Training-dataset capture cap, in clips. Rotation is by file count (the
+    // writer prunes oldest-first past the cap), so this is the only bound on how
+    // much of the storage quota the corpus may take. The @listam/backend default
+    // is 5000 — at ~107 KB per real clip that is ~536 MB, i.e. HALF of the 1 GiB
+    // DEFAULT_MAX_STORAGE_BYTES, which is how the always-on peer went over quota
+    // on 2026-07-28. Cap it at a share of the quota instead: 1500 clips ≈ 160 MB
+    // ≈ 15%, still months of history at the observed ~10-40 clips/day.
+    const datasetMaxFiles = Number(env.LISTAM_VOICE_DATASET_MAX_FILES ?? r.datasetMaxFiles ?? DEFAULT_DATASET_MAX_FILES)
     return {
         enabled: env.LISTAM_VOICE_ENABLED === '1' || r.enabled === true,
         engine,
@@ -73,6 +85,15 @@ export function normalizeVoiceConfig(raw = {}, env = {}) {
         execConfidence: normalizeExecFloors(r.execConfidence, env),
         extraArgs,
         maxUtteranceSeconds: Number.isFinite(maxSecs) && maxSecs > 0 ? maxSecs : null,
+        // Where captured utterances land. service.mjs already reads this key; it
+        // was never produced here, so a configured `voice.datasetDir` was silently
+        // ignored and capture always fell back to <storage>/voice-dataset.
+        datasetDir: typeof (env.LISTAM_VOICE_DATASET_DIR ?? r.datasetDir) === 'string'
+            ? String(env.LISTAM_VOICE_DATASET_DIR ?? r.datasetDir).trim() || null
+            : null,
+        datasetMaxFiles: Number.isInteger(datasetMaxFiles) && datasetMaxFiles > 0
+            ? datasetMaxFiles
+            : DEFAULT_DATASET_MAX_FILES,
     }
 }
 

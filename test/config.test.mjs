@@ -14,6 +14,7 @@ import {
     normalizeBackupConfig,
     DEFAULT_VOICE_PROMPTS,
     DEFAULT_MAX_STORAGE_BYTES,
+    DEFAULT_DATASET_MAX_FILES,
 } from '../src/config.mjs'
 
 test('config builds per role with defaults and validation', () => {
@@ -125,6 +126,32 @@ test('voice engine + warm-server knobs: binPath follows engine, audioCtx -> -ac,
     assert.equal(normalizeVoiceConfig({ serverPort: 9095 }, {}).serverPort, 9095)
     assert.equal(normalizeVoiceConfig({ serverPort: 99999 }, {}).serverPort, undefined)
     assert.equal(normalizeVoiceConfig({}, { LISTAM_VOICE_SERVER_PORT: '9096' }).serverPort, 9096)
+})
+
+test('dataset capture: dir is honoured and the clip cap stays a share of the storage quota', () => {
+    // The cap is the only bound on the corpus (rotation is by file count) and it
+    // shares the storage quota with the corestore, so the default must stay well
+    // under it: 1500 clips at the observed ~107 KB each is ~160 MB of 1 GiB.
+    const def = normalizeVoiceConfig({}, {})
+    assert.equal(def.datasetMaxFiles, DEFAULT_DATASET_MAX_FILES)
+    assert.ok(DEFAULT_DATASET_MAX_FILES * 107_000 < DEFAULT_MAX_STORAGE_BYTES / 4)
+
+    // config + env override, garbage falls back to the default
+    assert.equal(normalizeVoiceConfig({ datasetMaxFiles: 400 }, {}).datasetMaxFiles, 400)
+    assert.equal(normalizeVoiceConfig({}, { LISTAM_VOICE_DATASET_MAX_FILES: '250' }).datasetMaxFiles, 250)
+    assert.equal(normalizeVoiceConfig({ datasetMaxFiles: 0 }, {}).datasetMaxFiles, DEFAULT_DATASET_MAX_FILES)
+    assert.equal(normalizeVoiceConfig({ datasetMaxFiles: -5 }, {}).datasetMaxFiles, DEFAULT_DATASET_MAX_FILES)
+    assert.equal(normalizeVoiceConfig({ datasetMaxFiles: 'lots' }, {}).datasetMaxFiles, DEFAULT_DATASET_MAX_FILES)
+
+    // datasetDir was read by service.mjs but never produced here — a configured
+    // dir was silently ignored. Absent stays null so the storage-dir default wins.
+    assert.equal(def.datasetDir, null)
+    assert.equal(normalizeVoiceConfig({ datasetDir: '/srv/clips' }, {}).datasetDir, '/srv/clips')
+    assert.equal(normalizeVoiceConfig({ datasetDir: '   ' }, {}).datasetDir, null)
+    assert.equal(
+        normalizeVoiceConfig({ datasetDir: '/srv/clips' }, { LISTAM_VOICE_DATASET_DIR: '/mnt/clips' }).datasetDir,
+        '/mnt/clips',
+    )
 })
 
 test('backup config: schedule defaults on, env/config can disable, password optional and never defaulted', () => {
