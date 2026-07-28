@@ -16,6 +16,19 @@ function bootstrapFlag(testnet) {
     return testnet.bootstrap.map(({ host, port }) => `${host}:${port}`).join(',')
 }
 
+// The backend logs one of these per RPC_LIST_BACKUPS it serves (plus a generic
+// "Got a request" line), which is exactly what made the status poll visible in
+// the journal — so count them to prove the poll is gone.
+function countBackupPolls(stderr) {
+    return (stderr.match(/Command RPC_LIST_BACKUPS/g) ?? []).length
+}
+
+function readStatusFile(dir) {
+    try { return JSON.parse(fs.readFileSync(join(dir, 'headless-status.json'), 'utf8')) } catch { return null }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 // A scheduled file lands in <storage>/<headless namespace>/backups; the exact
 // path is owned by the backend, so just hunt the storage tree for the fixed
 // rolling filenames rather than hard-coding the layout.
@@ -90,6 +103,55 @@ test('set-backup-password arms the rolling schedule and list-backups surfaces it
     )
     assert.equal(status.backup.passwordSet, true)
     assert.equal(status.backup.tiers.length, 3)
+})
+
+// An always-on peer used to re-read RPC_LIST_BACKUPS on every 5s status write:
+// ~34.5k journal lines/day for a summary whose fastest tier moves every 15
+// minutes. The status file must stay live at 5s WITHOUT the backup poll riding
+// along — check both halves, since silencing the poll by stalling the status
+// write would be the obvious wrong fix.
+test('the 5s status write no longer polls the backup summary', { timeout: 240_000 }, async (t) => {
+    const testnet = await createTestnet(3)
+    const dir = mkdtempSync(join(tmpdir(), 'listam-headless-backup-poll-'))
+    t.after(async () => {
+        await testnet.destroy()
+        rmSync(dir, { recursive: true, force: true })
+    })
+
+    const setup = await runOneShot(['setup', '--storage', dir, '--role', 'participant'])
+    assert.equal(setup.parsed?.ok, true)
+
+    const node = runHeadless(['run', '--storage', dir, '--bootstrap', bootstrapFlag(testnet)])
+    await node.ready()
+    t.after(() => node.stop())
+
+    // Boot legitimately reads the summary once; wait for it to land so the
+    // measured window is steady state rather than bootstrap.
+    await node.waitFor((reply) => reply.backup != null, { op: 'status', timeoutMs: 30_000 })
+
+    const pollsBefore = countBackupPolls(node.stderr)
+    const statusBefore = readStatusFile(dir)
+    assert.ok(Number.isFinite(statusBefore?.updatedAt), 'status file is being written')
+
+    // ~4 status ticks, comfortably inside the 60s summary cadence.
+    await sleep(22_000)
+
+    const statusAfter = readStatusFile(dir)
+    assert.ok(
+        statusAfter.updatedAt - statusBefore.updatedAt >= 15_000,
+        `status file must keep its 5s tick (advanced only ${statusAfter.updatedAt - statusBefore.updatedAt}ms)`,
+    )
+    assert.ok(statusAfter.backup, 'the cached backup summary is still reported')
+
+    const polled = countBackupPolls(node.stderr) - pollsBefore
+    assert.ok(polled <= 1, `expected at most 1 backup poll across ~4 status ticks, saw ${polled}`)
+
+    // An operator op that CHANGES backup state must still be reflected at once,
+    // not up to a minute later.
+    const off = await node.request('set-backup-schedule', { enabled: false })
+    assert.equal(off.ok, true, `set-backup-schedule failed: ${JSON.stringify(off)}`)
+    const status = await node.request('status')
+    assert.equal(status.backup.scheduleEnabled, false, 'status reflects the toggle without waiting for the slow refresh')
 })
 
 test('config/env password bootstraps the schedule with no interactive step', { timeout: 240_000 }, async (t) => {
