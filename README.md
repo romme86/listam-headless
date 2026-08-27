@@ -113,6 +113,29 @@ Storage quotas: `--max-storage-bytes` (default 1 GiB) is checked
 periodically; a blind helper over quota leaves its swarm topics (stops
 taking on more data) and never deletes anything automatically.
 
+## Blind relay
+
+Two peers that are both behind carrier-grade NAT cannot hole punch: hyperdht
+gives up on a double-random NAT pair without even trying, which is why three
+phones on 4G could not pair with each other. A box with a reachable address can
+relay the connection for them.
+
+```sh
+node headless.mjs relay --storage ~/listam-relay --print-key   # mint/print the key, then exit
+node headless.mjs relay --storage ~/listam-relay               # serve
+node headless.mjs install --storage ~/listam-relay --role relay # always-on (Linux)
+```
+
+The relay is a peer of nothing: no config, no base, no list keys. It pairs two
+peers on a token they exchanged through the DHT and pumps bytes between them —
+it terminates no encryption and can read nothing it carries. Clients reach it by
+its **public key**, which the operator copies out of `--print-key` (or
+`headless.mjs status`) and into the client's `relayThrough` setting; the key is
+derived from a persisted seed, so it survives restarts and reinstalls of the
+service. It stops on SIGTERM (no stdin op surface), logs relay stats every five
+minutes (`--stats-interval <seconds>`), and installs as its own systemd unit
+(`listam-headless-relay`) so one box can run both a peer and a relay.
+
 ## Test
 
 ```sh

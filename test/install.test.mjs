@@ -4,9 +4,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
     CRON_MARKER,
+    RELAY_CRON_MARKER,
+    RELAY_SERVICE_NAME,
+    SERVICE_NAME,
     assertShellSafe,
     mergeCrontabLines,
     renderGuardCrontab,
+    renderRelayRunScript,
     renderRunScript,
     renderUnitFile,
 } from '../src/install.mjs'
@@ -78,4 +82,40 @@ test('shell-unsafe paths are refused instead of quoted', () => {
         assert.throws(() => assertShellSafe('path', bad), /must be a non-empty path/)
     }
     assert.throws(() => renderRunScript({ ...PATHS, storageDir: '/home/u/with space' }))
+})
+
+test('relay run script: no config, no FIFO, stops on signal not EOF', () => {
+    const script = renderRelayRunScript(PATHS)
+    assert.ok(script.startsWith('#!/bin/bash\n'))
+    // The relay has no config to set up (and setup --force is how voice/leaf
+    // config has been dropped before) and no op surface to keep stdin open for.
+    assert.ok(!script.includes('setup --storage'))
+    assert.ok(!script.includes('mkfifo'))
+    assert.match(script, /exec "\/home\/u\/node22\/bin\/node" "\/home\/u\/listam\/listam-headless\/headless\.mjs" relay --storage "\$STORAGE" < \/dev\/null\n$/)
+    assert.throws(() => renderRelayRunScript({ ...PATHS, storageDir: '/home/u/with space' }))
+})
+
+test('relay unit is a separate service so a box can run peer and relay at once', () => {
+    assert.notEqual(RELAY_SERVICE_NAME, SERVICE_NAME)
+    const unit = renderUnitFile({ runScriptPath: PATHS.runScriptPath, description: 'Listam blind relay (always-on)' })
+    assert.match(unit, /Description=Listam blind relay \(always-on\)/)
+    assert.match(unit, /Restart=always/)
+})
+
+test('relay crontab lines are marked separately from the peer service', () => {
+    // Substring matching drives merge/uninstall, so neither marker may contain
+    // the other or removing one service silently removes the other.
+    assert.ok(!RELAY_CRON_MARKER.includes(CRON_MARKER))
+    assert.ok(!CRON_MARKER.includes(RELAY_CRON_MARKER))
+
+    const peerLines = renderGuardCrontab(PATHS)
+    const relayLines = renderGuardCrontab({ ...PATHS, role: 'relay', runScriptPath: '/home/u/listam-relay/run-relay.sh' })
+    for (const line of relayLines) assert.ok(line.endsWith(RELAY_CRON_MARKER))
+    assert.match(relayLines[0], /relay\.log/)
+
+    // Installing the relay keeps the peer's lines, and vice versa.
+    const both = mergeCrontabLines(peerLines.join('\n'), relayLines, RELAY_CRON_MARKER)
+    for (const line of [...peerLines, ...relayLines]) assert.ok(both.includes(line))
+    const peerOnly = mergeCrontabLines(both, peerLines, CRON_MARKER)
+    for (const line of relayLines) assert.ok(peerOnly.includes(line), 'a peer reinstall leaves the relay guard alone')
 })

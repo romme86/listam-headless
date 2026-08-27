@@ -6,9 +6,12 @@
 //                            [--max-storage-bytes <n>] [--force]
 //   node headless.mjs run    --storage <dir> [--bootstrap host:port,...]
 //   node headless.mjs status --storage <dir>
-//   node headless.mjs install   --storage <dir> [--role ...] [--base-key <hex>]
-//                               [--invite <key>]   (Linux: systemd user unit)
-//   node headless.mjs uninstall --storage <dir>
+//   node headless.mjs relay  --storage <dir> [--bootstrap host:port,...]
+//                            [--stats-interval <seconds>] [--print-key]
+//   node headless.mjs install   --storage <dir> [--role participant|blind-storage|relay]
+//                               [--base-key <hex>] [--invite <key>]
+//                                                  (Linux: systemd user unit)
+//   node headless.mjs uninstall --storage <dir> [--role ...]
 //
 // `run` is the long-lived owned peer. It accepts the scriptable harness
 // primitives as JSON lines on stdin (status, invite/print-invite, join,
@@ -94,6 +97,73 @@ async function main() {
         process.exit(snapshot.stale ? 1 : 0)
     }
 
+    // The blind relay is a peer of nothing: no config, no base, no list keys —
+    // just a reachable hyperdht address that pairs two NAT-stuck peers and
+    // pumps bytes between them. It therefore takes no `setup` step; the only
+    // state it keeps is the seed behind its stable public key.
+    if (command === 'relay') {
+        const { startRelay, loadRelayKeyPair, relayPublicKeyZ32 } = await import('./src/relay.mjs')
+
+        // Key-only mode: the operator has to copy this key into client builds,
+        // and asking them to start (and then kill) a long-lived service to read
+        // it is how keys end up transcribed wrong. Creates the seed if this is
+        // a fresh storage dir, so the key can be minted before first serve.
+        if (args['print-key'] === true) {
+            const keyPair = await loadRelayKeyPair({ fs, storageDir })
+            out({ ok: true, publicKey: relayPublicKeyZ32(keyPair.publicKey) })
+            return
+        }
+
+        // A relay box may also carry a participant config; honour its bootstrap
+        // so a private testnet does not need the flag repeated.
+        const bootstrap = parseBootstrap(args.bootstrap) ?? loadConfig(fs, storageDir)?.bootstrap ?? null
+        // A valueless `--stats-interval` parses to `true`, and Number(true) is 1:
+        // taking it would turn the five-minute heartbeat into a per-second
+        // journald flood on a box meant to run unattended for months.
+        const statsSeconds = typeof args['stats-interval'] === 'string' ? Number(args['stats-interval']) : NaN
+        const relay = await startRelay({
+            fs,
+            storageDir,
+            logger,
+            bootstrap,
+            ...(Number.isFinite(statsSeconds) && statsSeconds > 0 ? { statsIntervalMs: statsSeconds * 1000 } : {}),
+        })
+
+        // stdout stays machine-readable for scripts; the banner on stderr is for
+        // the human who has to retype this key somewhere else.
+        out({ event: 'relay-ready', publicKey: relay.publicKeyZ32, storage: storageDir })
+        process.stderr.write(
+            '\n  Listam blind relay is listening.\n' +
+            '  Give this public key to clients as their relayThrough address:\n\n' +
+            `      ${relay.publicKeyZ32}\n\n`,
+        )
+
+        let relayStopping = false
+        const stopRelay = async () => {
+            if (relayStopping) return
+            relayStopping = true
+            // Same reasoning as the service shutdown below: a teardown blocked
+            // against an unreachable DHT must not outlive the stop request.
+            const watchdog = setTimeout(() => {
+                logger.log('[ERROR] Relay shutdown did not complete within 5s; forcing exit')
+                process.exit(0)
+            }, 5_000)
+            watchdog.unref?.()
+            try {
+                await relay.close()
+            } catch (error) {
+                logger.log('[ERROR] Relay shutdown error:', error)
+            }
+            process.exit(0)
+        }
+        process.on('SIGINT', () => void stopRelay())
+        process.on('SIGTERM', () => void stopRelay())
+        // No stdin op surface (nothing to operate), so unlike `run` the relay
+        // does not treat EOF as a stop: it is driven entirely by signals, which
+        // is what lets the systemd unit start it without a control FIFO.
+        return
+    }
+
     // The installer pulls in child_process/systemd plumbing the long-lived
     // service never needs; load it only for these commands.
     if (command === 'install') {
@@ -111,12 +181,12 @@ async function main() {
 
     if (command === 'uninstall') {
         const { uninstallService } = await import('./src/install.mjs')
-        const result = uninstallService({ fs, storageDir })
+        const result = uninstallService({ fs, storageDir, role: args.role ?? 'participant' })
         out(result)
         process.exit(result.ok ? 0 : 1)
     }
 
-    if (command !== 'run') fail(`unknown command ${command} (expected setup, run, status, install, or uninstall)`)
+    if (command !== 'run') fail(`unknown command ${command} (expected setup, run, relay, status, install, or uninstall)`)
 
     const config = loadConfig(fs, storageDir)
     if (!config) fail(`no valid config at ${configPath(storageDir)}; run setup first`)
