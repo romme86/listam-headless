@@ -24,6 +24,13 @@ test('restart preserves identity, storage, and status', { timeout: 240_000 }, as
     const setup = await runOneShot(['setup', '--storage', dir, '--role', 'participant'])
     assert.equal(setup.parsed?.ok, true)
 
+    // A saved experimental configuration must not revive the paused leaf/voice
+    // services on either the first boot or the restart below.
+    const configPath = join(dir, 'headless-config.json')
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    fs.writeFileSync(configPath, JSON.stringify({ ...config, leafBridgePort: 9993,
+        voice: { enabled: true, modelPath: '/missing/paused-experiment-model.bin' } }))
+
     // First life: create the base and content.
     const first = runHeadless(['run', '--storage', dir, '--bootstrap', bootstrapFlag(testnet)])
     await first.ready()
@@ -32,6 +39,10 @@ test('restart preserves identity, storage, and status', { timeout: 240_000 }, as
     const beforeDump = await first.waitFor((reply) => reply.items?.length === 2, { op: 'dump', timeoutMs: 30_000 })
     const beforeStatus = await first.request('status')
     assert.ok(beforeStatus.baseId, 'status exposes a base identity fingerprint')
+    assert.equal(beforeStatus.leafBridge, null)
+    const provision = await first.request('provision-leaf', {})
+    assert.equal(provision.ok, false)
+    assert.equal(provision.reason, 'feature-unavailable')
     await first.stop()
 
     // Status file survives shutdown and is marked stopped + stale-able.
@@ -44,6 +55,7 @@ test('restart preserves identity, storage, and status', { timeout: 240_000 }, as
     await second.ready()
     const afterDump = await second.waitFor((reply) => reply.items?.length === 2, { op: 'dump', timeoutMs: 60_000 })
     const afterStatus = await second.request('status')
+    assert.equal(afterStatus.leafBridge, null)
 
     assert.equal(afterStatus.baseId, beforeStatus.baseId, 'base identity is preserved across restart')
     assert.deepEqual(

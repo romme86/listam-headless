@@ -27,7 +27,7 @@
     "blind-relay": "^1.6.1",
     "corestore": "^7.5.0",
     "hypercore-crypto": "^3.6.1",
-    "hyperdht": "^6.27.0",
+    "hyperdht": "^6.34.0",
     "hyperswarm": "^4.12.1",
     "z32": "^1.1.0"
   },
@@ -48,6 +48,7 @@
     "@listam/i18n": "file:../listam-packages/packages/i18n",
     "@listam/owner-control": "file:../listam-packages/packages/owner-control",
     "@listam/client": "file:../listam-packages/packages/client",
-    "@listam/backend": "file:../listam-packages/packages/backend"
+    "@listam/backend": "file:../listam-packages/packages/backend",
+    "tar": "^7.5.22"
   }
 }

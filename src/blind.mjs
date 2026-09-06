@@ -20,7 +20,7 @@ import { createStorageLease } from '@listam/backend/lib/storage-lease.mjs'
 import { writeStatus } from './status.mjs'
 import { createQuotaMonitor } from './quota.mjs'
 
-export async function startBlindHelper({ fs, storageDir, config, logger, now = Date.now }) {
+export async function startBlindHelper({ fs, storageDir, config, logger, now = Date.now, quotaIntervalMs = 30_000 }) {
     const instanceId = Math.random().toString(36).slice(2, 8)
     const lease = createStorageLease({
         fs,
@@ -43,8 +43,10 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
     await store.ready()
 
     const swarm = new Hyperswarm(config.bootstrap ? { bootstrap: config.bootstrap } : {})
+    let quotaPaused = false
     let peerCount = 0
     swarm.on('connection', (conn) => {
+        if (quotaPaused) { conn.on('error', () => {}); conn.destroy(); return }
         peerCount = swarm.connections.size
         conn.on('close', () => {
             peerCount = swarm.connections.size
@@ -54,14 +56,19 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
     })
 
     const cores = new Map()
+    const downloads = new Map()
+    function startDownload(keyHex, core) {
+        if (quotaPaused || downloads.has(keyHex)) return
+        downloads.set(keyHex, core.download({ start: 0, end: -1 }))
+        swarm.join(crypto.discoveryKey(b4a.from(keyHex, 'hex')), { server: true, client: true })
+    }
     async function pin(keyHex) {
         if (cores.has(keyHex)) return cores.get(keyHex)
         const core = store.get({ key: b4a.from(keyHex, 'hex') })
         await core.ready()
         // Durable storage role: fetch everything, including future appends.
-        core.download({ start: 0, end: -1 })
-        swarm.join(crypto.discoveryKey(b4a.from(keyHex, 'hex')), { server: true, client: true })
         cores.set(keyHex, core)
+        startDownload(keyHex, core)
         logger?.log?.('[INFO] Pinned core for blind replication', { fingerprint: secretFingerprint(keyHex) })
         return core
     }
@@ -74,15 +81,25 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
         fs,
         path: storageDir,
         maxBytes: config.maxStorageBytes,
+        intervalMs: quotaIntervalMs,
         onExceeded: ({ usedBytes, maxBytes }) => {
-            // A storage helper over quota stops announcing so it does not take
-            // on more data; existing data is never deleted automatically.
-            logger?.log?.('[AUDIT] Blind-helper storage quota exceeded; leaving swarm topics', { usedBytes, maxBytes })
+            // Leaving discovery alone does not stop already connected peers or
+            // outstanding download ranges from continuing to fill the disk.
+            quotaPaused = true
+            logger?.log?.('[AUDIT] Blind-helper storage quota exceeded; pausing replication', { usedBytes, maxBytes })
+            for (const range of downloads.values()) range.destroy()
+            downloads.clear()
+            for (const conn of swarm.connections) conn.destroy()
             for (const keyHex of cores.keys()) {
                 try {
                     swarm.leave(crypto.discoveryKey(b4a.from(keyHex, 'hex')))
                 } catch {}
             }
+        },
+        onRecovered: () => {
+            quotaPaused = false
+            for (const [keyHex, core] of cores) startDownload(keyHex, core)
+            logger?.log?.('[INFO] Blind-helper storage quota recovered; resuming replication')
         },
     })
     quota.start()
@@ -96,7 +113,7 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
                 contiguousLength: core.contiguousLength,
             })),
             peerCount,
-            quota: { ...quota.check() },
+            quota: quota.snapshot(),
             // The boundary the status must state plainly: this helper holds
             // ciphertext only.
             encryptionKey: 'never-held',

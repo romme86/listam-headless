@@ -34,6 +34,7 @@ export function createQuotaMonitor({ fs, path, maxBytes, intervalMs = 30_000, on
 
     let exceeded = false
     let timer = null
+    let latest = { usedBytes: 0, maxBytes, exceeded: false }
 
     function check() {
         const usedBytes = directorySizeBytes(fs, path)
@@ -45,7 +46,8 @@ export function createQuotaMonitor({ fs, path, maxBytes, intervalMs = 30_000, on
             exceeded = false
             onRecovered?.({ usedBytes, maxBytes })
         }
-        return { usedBytes, maxBytes, exceeded }
+        latest = { usedBytes, maxBytes, exceeded }
+        return { ...latest }
     }
 
     function start() {
@@ -67,5 +69,6 @@ export function createQuotaMonitor({ fs, path, maxBytes, intervalMs = 30_000, on
         start,
         stop,
         isExceeded: () => exceeded,
+        snapshot: () => ({ ...latest }),
     }
 }

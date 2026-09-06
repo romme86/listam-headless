@@ -106,7 +106,13 @@ export async function startRelay({
         socket.on('close', () => session.destroy())
     })
 
-    await server.listen(keyPair)
+    try {
+        await server.listen(keyPair)
+    } catch (error) {
+        await relay.close().catch(() => {})
+        await dht.destroy().catch(() => {})
+        throw error
+    }
 
     function stats() {
         // The `active` entries are getters over the cumulative counters; spread
@@ -116,6 +122,14 @@ export async function startRelay({
             pairings: { ...relay.stats.pairings },
             streams: { ...relay.stats.streams },
             sessionErrors,
+            dht: {
+                punches: { ...dht.stats.punches },
+                relaying: { ...dht.stats.relaying },
+                socketPool: {
+                    ...dht.stats.socketPool,
+                    active: dht.stats.socketPool.socketsAdded - dht.stats.socketPool.socketsRemoved,
+                },
+            },
             uptimeMs: now() - startedAt,
         }
     }
