@@ -205,3 +205,9 @@ npm run ci    # lint + unit tests + acceptance tests on a private
               # identity/storage/status persistence, lease refusal,
               # export/import id round-trip)
 ```
+
+The [0.15.0 release validation record](https://github.com/romme86/listam-tools/blob/main/reviews/2026-09-13-p2p-release.md)
+also covers public-network Mac/Geekom/Pi synchronization and authenticated
+Mac-to-Geekom mirror publication, helper restart and withdrawal. It records
+the remaining Geekom single-host private-DHT timeouts separately from those
+cross-device results; the Linux private-network suite was not fully green.
