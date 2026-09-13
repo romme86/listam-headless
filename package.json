@@ -1,6 +1,6 @@
 {
   "name": "listam-headless",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "main": "headless.mjs",
@@ -25,10 +25,10 @@
     "@listam/secrets": "file:../listam-packages/packages/secrets",
     "b4a": "^1.7.1",
     "blind-relay": "^1.6.1",
-    "corestore": "^7.5.0",
+    "corestore": "^7.12.5",
     "hypercore-crypto": "^3.6.1",
     "hyperdht": "^6.34.0",
-    "hyperswarm": "^4.12.1",
+    "hyperswarm": "^4.17.1",
     "z32": "^1.1.0"
   },
   "optionalDependencies": {

@@ -7,9 +7,9 @@
 //   node headless.mjs run    --storage <dir> [--bootstrap host:port,...]
 //   node headless.mjs status --storage <dir>
 //   node headless.mjs relay  --storage <dir> [--bootstrap host:port,...]
-//                            [--stats-interval <seconds>] [--print-key]
+//                            [--port <udp-port>] [--stats-interval <seconds>] [--print-key]
 //   node headless.mjs install   --storage <dir> [--role participant|blind-storage|relay]
-//                               [--base-key <hex>] [--invite <key>]
+//                               [--base-key <hex>] [--invite <key>] [--port <relay-udp-port>]
 //                                                  (Linux: systemd user unit)
 //   node headless.mjs uninstall --storage <dir> [--role ...]
 //
@@ -66,6 +66,19 @@ async function main() {
     const command = args._[0] ?? 'run'
     const storageDir = typeof args.storage === 'string' ? args.storage : null
     if (!storageDir) fail('--storage <dir> is required')
+
+    if (command === 'relay-check') {
+        const { checkRelay } = await import('./src/relay-check.mjs')
+        const { DEFAULT_RELAY_KEYS } = await import('@listam/backend/lib/relay.mjs')
+        const keys = typeof args.key === 'string' ? [args.key] : DEFAULT_RELAY_KEYS
+        const results = []
+        for (const key of keys) results.push(await checkRelay({ key, timeoutMs: args.timeout ? Number(args.timeout) : 45000, bootstrap: parseBootstrap(args.bootstrap) }))
+        const report = { ok: results.every((result) => result.ok), updatedAt: Date.now(), results }
+        fs.mkdirSync(storageDir, { recursive: true })
+        fs.writeFileSync(`${storageDir}/relay-health.json`, JSON.stringify(report, null, 2))
+        out(report)
+        process.exit(report.ok ? 0 : 1)
+    }
 
     if (command === 'setup') {
         if (loadConfig(fs, storageDir) && args.force !== true) {
@@ -126,6 +139,7 @@ async function main() {
             storageDir,
             logger,
             bootstrap,
+            port: args.port,
             ...(Number.isFinite(statsSeconds) && statsSeconds > 0 ? { statsIntervalMs: statsSeconds * 1000 } : {}),
         })
 
@@ -174,6 +188,7 @@ async function main() {
             role: args.role ?? 'participant',
             baseKeyHex: typeof args['base-key'] === 'string' ? args['base-key'] : null,
             inviteKey: typeof args.invite === 'string' ? args.invite : null,
+            port: args.port,
         })
         out(result)
         process.exit(result.ok ? 0 : 1)
@@ -203,7 +218,7 @@ async function main() {
     // surface, but only after the signed-envelope/capability authorization in
     // src/control.mjs. The executor narrows what each role offers remotely.
     let control = null
-    const executor = async (command, payload) => {
+    const executor = async (command, payload, device) => {
         switch (command) {
             case 'status':
                 return { status: instance.snapshot() }
@@ -230,6 +245,9 @@ async function main() {
                 return instance.handleOp({ op: 'list-backups' })
             case 'topics':
                 if (config.role !== 'blind-storage') return { ok: false, reason: 'not-supported-for-role' }
+                if (payload?.action === 'manifest') {
+                    return instance.handleOp({ op: 'mirror-manifest', manifest: payload.manifest, owner: device.deviceId })
+                }
                 if (payload?.action !== 'pin') return { ok: false, reason: 'unknown-topics-action' }
                 return instance.handleOp({ op: 'pin', key: payload.key })
             case 'shutdown':

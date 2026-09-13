@@ -23,6 +23,7 @@ import {
     verifyPairingRequest,
 } from '@listam/owner-control'
 import { createFileSecretStore, secretFingerprint } from '@listam/secrets'
+import { createRelayThrough, parseRelayKeys, DEFAULT_RELAY_KEYS } from '@listam/backend/lib/relay.mjs'
 
 const CONTROL_SEED_KEY = 'listam.control.v1.serverSeed'
 const AUDIT_RING_MAX = 100
@@ -64,7 +65,9 @@ export async function startOwnerControl({ fs, storageDir, config, executor, onSh
     }
 
     const dht = new DHT(config.bootstrap ? { bootstrap: config.bootstrap } : {})
-    const server = dht.createServer((socket) => {
+    const relayKeys = parseRelayKeys(config.relayKeys ?? DEFAULT_RELAY_KEYS).keys
+    const relayThrough = createRelayThrough(relayKeys)
+    const server = dht.createServer({ relayThrough: relayThrough ? () => relayThrough(true, {}) : null }, (socket) => {
         socket.on('error', () => {})
         const rl = readline.createInterface({ input: socket })
         // readline re-emits input-stream errors on the Interface itself; without

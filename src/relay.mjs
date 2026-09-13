@@ -55,18 +55,37 @@ export function relayPublicKeyZ32(publicKey) {
     return z32.encode(publicKey)
 }
 
+export function parseRelayPort(value) {
+    if (value === undefined || value === null) return null
+    if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value))) {
+        throw new Error('relay port must be an integer between 1 and 65535')
+    }
+    const port = Number(value)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error('relay port must be an integer between 1 and 65535')
+    }
+    return port
+}
+
 export async function startRelay({
     fs = nodeFs,
     storageDir,
     logger,
     bootstrap = null,
+    port = null,
     statsIntervalMs = DEFAULT_STATS_INTERVAL_MS,
     now = Date.now,
 }) {
     if (!storageDir) throw new Error('A storageDir is required')
 
+    const listenPort = parseRelayPort(port)
     const keyPair = await loadRelayKeyPair({ fs, storageDir })
-    const dht = new DHT(bootstrap ? { bootstrap } : {})
+    // Join the existing DHT normally. A reachable, long-lived node can become
+    // persistent and help discovery; never force persistence on public mainnet.
+    const dht = new DHT({
+        ...(bootstrap ? { bootstrap } : {}),
+        ...(listenPort ? { port: listenPort } : {}),
+    })
     const startedAt = now()
     let sessionErrors = 0
 
@@ -108,6 +127,11 @@ export async function startRelay({
 
     try {
         await server.listen(keyPair)
+        // HyperDHT may choose another port when the requested one is occupied.
+        // A router mapping/bootstrap address would then point at the wrong node.
+        if (listenPort && dht.localAddress()?.port !== listenPort) {
+            throw new Error(`Relay could not bind requested UDP port ${listenPort}`)
+        }
     } catch (error) {
         await relay.close().catch(() => {})
         await dht.destroy().catch(() => {})
@@ -123,6 +147,13 @@ export async function startRelay({
             streams: { ...relay.stats.streams },
             sessionErrors,
             dht: {
+                bootstrapped: dht.bootstrapped,
+                online: dht.online,
+                firewalled: dht.firewalled,
+                randomized: dht.randomized,
+                ephemeral: dht.ephemeral,
+                localAddress: dht.localAddress(),
+                publicAddress: dht.host && dht.port ? { host: dht.host, port: dht.port } : null,
                 punches: { ...dht.stats.punches },
                 relaying: { ...dht.stats.relaying },
                 socketPool: {

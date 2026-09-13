@@ -21,7 +21,7 @@ Two roles, chosen at setup:
 Requires Node.js 22 or newer. The always-on path targets Linux (Raspberry
 Pi OS, Debian, Ubuntu — systemd user unit with a cron fallback).
 
-**From npm (recommended for servers):**
+**From npm (latest published version):**
 
 ```sh
 npm install -g listam-headless
@@ -59,8 +59,11 @@ cd listam-headless && npm install
 ```
 
 Maintainers: `npm run dist` builds `dist/listam-headless-<version>.tgz`
-with the `@listam/*` deps rewritten to registry ranges; `npm publish` runs
-from `dist/stage/`.
+with the exact shared-package source included under `vendor/`. Extract the
+archive before running `npm install` inside `package/`; an external
+`npm install <archive>` does not resolve the archive's relative dependencies.
+For npm publication, first publish the shared packages, then run
+`npm run dist -- --registry` and publish from `dist/stage/`.
 
 ## Usage
 
@@ -104,10 +107,40 @@ a Bluetooth-less host it returns `{ ok: false, reason: "ble-unavailable" }`
 rather than failing, and `npx listam-headless` installs fine without it. It is
 an operator-only op — never exposed over the remote owner-control channel.
 
-The remote owner-control channel (configure/inspect from mobile/desktop
-without a shell) is Phase 14; until then stdin under the operator's
-shell/SSH is the only control surface, and nothing is exposed on the network
-beyond replication. The service exits on stdin EOF.
+The signed owner-control channel supports explicitly granted capabilities.
+Pairing offers and revocation stay on the local operator surface. The service
+exits on stdin EOF; the installed service keeps a private control FIFO open.
+
+## Durable encrypted mirroring
+
+A bootstrap pin alone is insufficient for offline multiwriter recovery.
+On the blind helper, mint a short-lived control offer through stdin or its FIFO:
+
+```json
+{"id":1,"op":"control-pair","capabilities":["topics:configure","status:read"]}
+```
+
+On a participant that has the intended list open, redeem the returned code,
+then use the helper's `controlPublicKey` from `control-info`:
+
+```json
+{"id":2,"op":"control-connect","code":"<pairing-code>","name":"List mirror"}
+{"id":3,"op":"control-command","serverPublicKeyHex":"<helper-public-key>","command":"topics","payload":{"action":"mirror","baseKey":"<list-bootstrap-key>"}}
+```
+
+The participant persists a subscription and publishes versioned public-key
+manifests as writers and materialized views change. It retries every 15 seconds
+while active, resumes after restart, and pauses with the network lifecycle.
+The helper persists manifests before acknowledging them and restores downloads
+after restart. Only core public keys and ciphertext reach the helper; the
+list encryption key stays with participants. Manual `pin` operations persist too.
+
+Use the same command with `action: "stop-mirror"` to withdraw that subscription.
+This stops automatic replication for keys no other manifest or manual pin needs;
+it does not erase existing ciphertext. Revocation prevents further control
+commands, so stop mirroring before revoking the controller when desired.
+Manifest revisions reject stale/conflicting updates; helper storage is bounded
+by its quota and a maximum of 4,096 registered cores.
 
 Storage quotas: `--max-storage-bytes` (default 1 GiB) is checked
 periodically; a blind helper over quota leaves its swarm topics (stops
@@ -135,6 +168,33 @@ derived from a persisted seed, so it survives restarts and reinstalls of the
 service. It stops on SIGTERM (no stdin op surface), logs relay stats every five
 minutes (`--stats-interval <seconds>`), and installs as its own systemd unit
 (`listam-headless-relay`) so one box can run both a peer and a relay.
+
+For a fixed UDP port, use `relay --port 49740` or
+`install --role relay --port 49740` with the same storage argument. The relay
+refuses to start if it cannot bind that port. Choose a port unused by the
+participant service, and forward the same UDP port through each upstream router.
+Status includes the listening/public addresses and DHT reachability.
+
+Discovery and connection relaying are separate: clients use the public HyperDHT
+network to find peers, and `relayThrough` forwards encrypted connection traffic
+when needed. The relay joins that same DHT and can help discovery once it becomes
+a reachable persistent node. A public bootstrap address additionally needs a
+stable public IP or DNS name and an externally reachable UDP port; a Tailscale
+address only works for clients on that tailnet. Verify external reachability
+before adding a node to client bootstrap or relay defaults.
+
+Check an actual encrypted round trip with direct hole punching disabled:
+
+```sh
+node headless.mjs relay-check --storage ~/listam-relay
+# Optional: --key <relay-public-key> --timeout 45000
+```
+
+The check uses synthetic data and writes `relay-health.json`, separate from the
+relay's service snapshot. Exit code 1 means a check failed. Run from another
+machine to verify reachability. The tools deployment script installs a ten-minute
+health timer, separate code roots for relays and participants, and persistent
+service restarts. A failed network probe does not automatically restart a relay.
 
 ## Test
 

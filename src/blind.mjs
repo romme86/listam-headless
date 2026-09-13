@@ -9,18 +9,21 @@
 // tiers are cryptographically unsupported today (finding C2) and must not be
 // promised.
 //
-// v1 pins the base (bootstrap) core key the owner hands over at setup; the
-// full writer/view core set syncs over owner-control in Phase 14.
+// Setup pins the bootstrap key. Authenticated owner-control manifests persist
+// the full writer/view key set and reconcile it as membership changes.
 import Corestore from 'corestore'
 import Hyperswarm from 'hyperswarm'
 import crypto from 'hypercore-crypto'
 import b4a from 'b4a'
 import { secretFingerprint } from '@listam/secrets'
 import { createStorageLease } from '@listam/backend/lib/storage-lease.mjs'
+import { createRelayThrough, parseRelayKeys, DEFAULT_RELAY_KEYS } from '@listam/backend/lib/relay.mjs'
+import { createBlindPins } from './blind-pins.mjs'
 import { writeStatus } from './status.mjs'
 import { createQuotaMonitor } from './quota.mjs'
 
 export async function startBlindHelper({ fs, storageDir, config, logger, now = Date.now, quotaIntervalMs = 30_000 }) {
+    const pins = createBlindPins({ fs, storageDir, pins: config.pins ?? [] })
     const instanceId = Math.random().toString(36).slice(2, 8)
     const lease = createStorageLease({
         fs,
@@ -42,7 +45,11 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
     const store = new Corestore(`${storageDir}/blind-store`)
     await store.ready()
 
-    const swarm = new Hyperswarm(config.bootstrap ? { bootstrap: config.bootstrap } : {})
+    const relayKeys = parseRelayKeys(config.relayKeys ?? DEFAULT_RELAY_KEYS).keys
+    const swarm = new Hyperswarm({
+        ...(config.bootstrap ? { bootstrap: config.bootstrap } : {}),
+        relayThrough: createRelayThrough(relayKeys),
+    })
     let quotaPaused = false
     let peerCount = 0
     swarm.on('connection', (conn) => {
@@ -73,8 +80,27 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
         return core
     }
 
-    for (const keyHex of config.pins ?? []) {
+    for (const keyHex of pins.keys()) {
         await pin(keyHex)
+    }
+
+    async function reconcilePins() {
+        const desired = new Set(pins.keys())
+        for (const key of desired) await pin(key)
+        for (const [key, core] of cores) {
+            if (desired.has(key)) continue
+            downloads.get(key)?.destroy()
+            downloads.delete(key)
+            await swarm.leave(crypto.discoveryKey(b4a.from(key, 'hex')))
+            await core.close()
+            cores.delete(key)
+        }
+    }
+    let operations = Promise.resolve()
+    function mutatePins(run) {
+        const result = operations.then(async () => { run(); await reconcilePins(); return snapshot() })
+        operations = result.catch(() => {})
+        return result
     }
 
     const quota = createQuotaMonitor({
@@ -107,6 +133,8 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
     function snapshot() {
         return {
             role: 'blind-storage',
+            relayConfigured: relayKeys.length,
+            manifests: pins.manifestCount(),
             pins: [...cores.entries()].map(([keyHex, core]) => ({
                 fingerprint: secretFingerprint(keyHex),
                 length: core.length,
@@ -131,8 +159,10 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
             case 'pin': {
                 const keyHex = typeof request.key === 'string' ? request.key.trim().toLowerCase() : ''
                 if (!/^[0-9a-f]{64}$/.test(keyHex)) return { ok: false, message: 'pin requires a 64-hex core key' }
-                await pin(keyHex)
-                return snapshot()
+                return mutatePins(() => pins.pin(keyHex))
+            }
+            case 'mirror-manifest': {
+                return mutatePins(() => pins.apply(request.manifest, request.owner ?? 'local'))
             }
             case 'peek': {
                 // Test/diagnostic primitive: return the locally stored block as
@@ -154,6 +184,7 @@ export async function startBlindHelper({ fs, storageDir, config, logger, now = D
     async function shutdown() {
         clearInterval(statusTimer)
         quota.stop()
+        await operations
         writeStatus(fs, storageDir, { ...snapshot(), stopped: true }, now())
         try {
             await swarm.destroy()

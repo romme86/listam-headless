@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-// Builds the standalone distribution of listam-headless: dist/stage/ is a
-// publishable copy whose @listam/* deps point at the npm registry instead
-// of the local listam-packages checkout (the working tree stays on file:
-// links for development), and dist/<name>-<version>.tgz is the tarball
-// served from the website. `npm publish` runs from dist/stage/.
+// Builds the website archive with vendored shared-package tarballs. Extract it
+// and run npm install inside package/. --registry instead produces a publishable
+// package using registry ranges, after shared versions have been published.
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -13,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const distDir = path.join(root, 'dist')
 const stageDir = path.join(distDir, 'stage')
+const registry = process.argv.includes('--registry')
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
@@ -55,6 +54,7 @@ const distPkg = {
     bugs: { url: 'https://github.com/romme86/listam-headless/issues' },
     keywords: ['listam', 'p2p', 'local-first', 'hyperswarm', 'autobase', 'raspberry-pi', 'self-hosted'],
     dependencies,
+    overrides: Object.fromEntries(Object.entries(pkg.overrides ?? {}).filter(([, spec]) => typeof spec === 'string' && !spec.startsWith('file:'))),
     ...(Object.keys(optionalDependencies).length ? { optionalDependencies } : {}),
 }
 
@@ -64,6 +64,25 @@ for (const entry of ['headless.mjs', 'src', 'README.md', 'LICENSE']) {
     fs.cpSync(path.join(root, entry), path.join(stageDir, entry), { recursive: true })
 }
 fs.writeFileSync(path.join(stageDir, 'package.json'), JSON.stringify(distPkg, null, 2) + '\n')
+
+// The downloadable archive carries the exact shared source used for this
+// release. Registry publishing remains a separate, explicit release step.
+if (!registry) {
+    const vendorDir = path.join(stageDir, 'vendor')
+    fs.mkdirSync(vendorDir)
+    const sharedRoot = path.resolve(root, '../listam-packages/packages')
+    for (const entry of fs.readdirSync(sharedRoot).sort()) {
+        const directory = path.join(sharedRoot, entry)
+        if (!fs.existsSync(path.join(directory, 'package.json'))) continue
+        const meta = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'))
+        const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', vendorDir], { cwd: directory, encoding: 'utf8' }))
+        distPkg.dependencies[meta.name] = `file:vendor/${packed.filename}`
+        distPkg.overrides[meta.name] = `$${meta.name}`
+    }
+    distPkg.files.push('vendor')
+    distPkg.private = true
+    fs.writeFileSync(path.join(stageDir, 'package.json'), JSON.stringify(distPkg, null, 2) + '\n')
+}
 
 const packed = execFileSync('npm', ['pack', '--pack-destination', distDir], {
     cwd: stageDir,
@@ -77,4 +96,4 @@ const sha256 = createHash('sha256').update(bytes).digest('hex')
 console.log(`tarball  ${tarball}`)
 console.log(`size     ${bytes.length} bytes`)
 console.log(`sha256   ${sha256}`)
-console.log(`publish  cd ${path.relative(process.cwd(), stageDir)} && npm publish`)
+console.log(registry ? `publish  cd ${path.relative(process.cwd(), stageDir)} && npm publish` : 'standalone archive includes shared packages; use --registry only after npm publication')

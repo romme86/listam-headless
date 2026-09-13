@@ -102,6 +102,12 @@ test('relay unit is a separate service so a box can run peer and relay at once',
     assert.match(unit, /Restart=always/)
 })
 
+test('relay installer retains a fixed UDP listening port across service restarts', () => {
+    const script = renderRelayRunScript({ ...PATHS, port: '49740' })
+    assert.match(script, /relay --storage "\$STORAGE" --port 49740 < \/dev\/null/)
+    assert.throws(() => renderRelayRunScript({ ...PATHS, port: true }), /relay port/)
+})
+
 test('relay crontab lines are marked separately from the peer service', () => {
     // Substring matching drives merge/uninstall, so neither marker may contain
     // the other or removing one service silently removes the other.

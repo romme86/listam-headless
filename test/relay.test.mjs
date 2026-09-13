@@ -11,12 +11,57 @@ import readline from 'node:readline'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import DHT from 'hyperdht'
+import { createSocket } from 'node:dgram'
 import createTestnet from 'hyperdht/testnet.js'
 import b4a from 'b4a'
-import { startRelay, loadRelayKeyPair, relayKeysPath } from '../src/relay.mjs'
+import { startRelay, loadRelayKeyPair, relayKeysPath, parseRelayPort } from '../src/relay.mjs'
 import { runOneShot } from './helpers/cli.mjs'
 
 const silentLogger = { log() {} }
+
+test('relay port rejects missing values, invalid ports and shell syntax', () => {
+    assert.equal(parseRelayPort(undefined), null)
+    assert.equal(parseRelayPort(null), null)
+    assert.equal(parseRelayPort('49740'), 49740)
+    assert.equal(parseRelayPort(65535), 65535)
+    for (const value of [true, false, '', 0, -1, 65536, 1.5, '49740;id', '1e3']) {
+        assert.throws(() => parseRelayPort(value), /relay port/)
+    }
+})
+
+test('a relay can use a fixed UDP port for discovery as well as connection relaying', { timeout: 30_000 }, async (t) => {
+    const testnet = await createTestnet(3)
+    t.after(() => testnet.destroy())
+    const reservation = createSocket('udp4')
+    reservation.bind(0, '0.0.0.0')
+    await once(reservation, 'listening')
+    const port = reservation.address().port
+    await new Promise(resolve => reservation.close(resolve))
+    const relay = await startRelay({ storageDir: tempStorage(t), port, bootstrap: testnet.bootstrap, logger: silentLogger, statsIntervalMs: 0 })
+    t.after(() => relay.close())
+    assert.equal(relay.stats().dht.localAddress.port, port)
+    const probe = new DHT({ bootstrap: [{ host: '127.0.0.1', port }] })
+    t.after(() => probe.destroy())
+    await probe.fullyBootstrapped()
+    assert.equal(probe.bootstrapped, true)
+    assert.ok(await probe.ping({ host: '127.0.0.1', port }), 'relay answers DHT discovery traffic on its advertised port')
+})
+
+test('a busy fixed relay port fails instead of silently advertising another port', { timeout: 30_000 }, async (t) => {
+    const testnet = await createTestnet(3)
+    t.after(() => testnet.destroy())
+    const reservation = createSocket('udp4')
+    reservation.bind(0, '0.0.0.0')
+    await once(reservation, 'listening')
+    t.after(() => reservation.close())
+    await assert.rejects(startRelay({
+        storageDir: tempStorage(t),
+        port: reservation.address().port,
+        bootstrap: testnet.bootstrap,
+        logger: silentLogger,
+        statsIntervalMs: 0,
+    }), /requested UDP port|EADDRINUSE/)
+})
 
 function tempStorage(t) {
     const dir = mkdtempSync(join(tmpdir(), 'listam-relay-'))
